@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mockup Generator</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <h1 class="logo">Mockup Generator</h1>
+      </div>
+      <div class="header-right">
+        <div class="api-key-row">
+          <input type="password" id="apiKey" placeholder="Gemini API Key (optional override)" class="api-input" autocomplete="off" spellcheck="false">
+          <button id="saveApiKey" class="btn btn-sm">Save Key</button>
+          <span id="apiKeySaved" class="saved-badge" hidden>Saved</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Panels -->
+    <main class="main">
+
+      <!-- Section 1: Base Images -->
+      <section class="panel">
+        <div class="panel-header">
+          <div class="panel-title-group">
+            <h2 class="panel-title">Base Images</h2>
+            <span class="count-badge" id="baseCount">0</span>
+          </div>
+          <button class="btn btn-add" id="addBaseImages">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            Add Images
+          </button>
+        </div>
+        <div class="image-grid" id="baseImageGrid">
+          <div class="empty-state">
+            <div class="empty-icon">
+              <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="4" y="8" width="32" height="24" rx="3" stroke="currentColor" stroke-width="1.5"/><circle cx="14" cy="17" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M4 27l8-8 6 6 4-4 10 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <p class="empty-label">No base images selected</p>
+            <p class="empty-hint">Curtain photos, renders or flats</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 2: Design Patterns -->
+      <section class="panel">
+        <div class="panel-header">
+          <div class="panel-title-group">
+            <h2 class="panel-title">Design Patterns</h2>
+            <span class="count-badge" id="patternCount">0</span>
+          </div>
+          <button class="btn btn-add" id="addPatternImages">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            Add Patterns
+          </button>
+        </div>
+        <div class="image-grid" id="patternImageGrid">
+          <div class="empty-state">
+            <div class="empty-icon">
+              <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="4" y="4" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="22" y="4" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="4" y="22" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="22" y="22" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/></svg>
+            </div>
+            <p class="empty-label">No patterns selected</p>
+            <p class="empty-hint">Fabric prints, textures or designs</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 3: Settings & Run -->
+      <section class="panel panel-settings">
+        <h2 class="panel-title" style="margin-bottom: 20px;">Settings</h2>
+
+        <div class="form-group">
+          <label class="form-label">Catalogue Name</label>
+          <input type="text" id="catalogueName" placeholder="e.g. SpringCollection2025" class="input" spellcheck="false">
+          <p class="form-hint">Used as prefix for all output folder names</p>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Destination Folder</label>
+          <div class="folder-row">
+            <input type="text" id="destinationPath" placeholder="No folder selected" class="input input-readonly" readonly>
+            <button class="btn btn-sm" id="selectDestination">Browse</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Pattern Scale</label>
+          <select id="scaleMode" class="input select-input">
+            <option value="a4-scan">A4 Scan — Realistic standard drape proportions</option>
+            <option value="fine-detail">Fine Detail — Micro-tiled for dense patterns</option>
+            <option value="large-accent">Large Accent — Prominent large-scale motifs</option>
+          </select>
+          <p class="form-hint">Controls how the fabric pattern is tiled onto the curtain</p>
+        </div>
+
+        <div class="summary-box">
+          <div class="summary-row">
+            <span class="summary-label">Base images</span>
+            <span class="summary-value" id="summaryBase">0</span>
+          </div>
+          <div class="summary-row">
+            <span class="summary-label">Patterns</span>
+            <span class="summary-value" id="summaryPattern">0</span>
+          </div>
+          <div class="summary-divider"></div>
+          <div class="summary-row">
+            <span class="summary-label">Total API calls</span>
+            <span class="summary-value summary-total" id="summaryTotal">0</span>
+          </div>
+        </div>
+
+        <button class="btn btn-run" id="runBtn" disabled>
+          <span id="runBtnText">Generate Mockups</span>
+        </button>
+      </section>
+
+    </main>
+
+    <!-- Progress Bar -->
+    <div class="progress-footer">
+      <div class="progress-bar-track">
+        <div class="progress-bar-fill" id="progressBarFill" style="width: 0%"></div>
+      </div>
+      <div class="progress-info">
+        <span class="progress-message" id="progressMessage">Ready to generate</span>
+        <span class="progress-counter" id="progressCounter"></span>
+      </div>
+    </div>
+
+    <!-- Console Panel -->
+    <div class="console-panel" id="consolePanel">
+      <div class="console-header">
+        <span class="console-title">Console</span>
+        <span class="console-count-badge" id="consoleCount">0</span>
+        <div class="console-spacer"></div>
+        <button class="console-btn" id="consoleClear">Clear</button>
+        <button class="console-btn console-btn-toggle" id="consoleToggle" title="Toggle console">
+          <svg id="consoleChevron" width="12" height="12" viewBox="0 0 12 12" fill="none" style="transform: rotate(0deg); transition: transform 0.2s;">
+            <path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </div>
+      <div class="console-body" id="consoleBody">
+        <div class="console-empty">No log entries yet — start a generation to see activity here</div>
+      </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast" hidden>
+      <span id="toastText"></span>
+    </div>
+
+  </div>
+  <script src="renderer.js"></script>
+</body>
+</html>
