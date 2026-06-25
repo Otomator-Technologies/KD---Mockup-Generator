@@ -13,9 +13,15 @@
     <header class="header">
       <div class="header-left">
         <h1 class="logo">Mockup Generator</h1>
+        <div class="engine-toggle">
+          <button class="engine-btn active" id="engineGoogle" data-engine="google">Google AI</button>
+          <button class="engine-btn" id="engineKD" data-engine="kd">KD Mockup Generator</button>
+          <button class="engine-btn" id="engineSP" data-engine="sp">Seamless Patterns</button>
+          <button class="engine-btn" id="engineCrop" data-engine="crop">Crop Pattern</button>
+        </div>
       </div>
       <div class="header-right">
-        <div class="api-key-row">
+        <div class="api-key-row" id="googleApiKeyRow">
           <input type="password" id="apiKey" placeholder="Gemini API Key (optional override)" class="api-input" autocomplete="off" spellcheck="false">
           <button id="saveApiKey" class="btn btn-sm">Save Key</button>
           <span id="apiKeySaved" class="saved-badge" hidden>Saved</span>
@@ -23,105 +29,369 @@
       </div>
     </header>
 
-    <!-- Main Panels -->
-    <main class="main">
+    <!-- ═══ Google AI Flow ═══ -->
+    <div id="flowGoogle" class="flow is-active">
+      <main class="main">
 
-      <!-- Section 1: Base Images -->
-      <section class="panel">
-        <div class="panel-header">
-          <div class="panel-title-group">
-            <h2 class="panel-title">Base Images</h2>
-            <span class="count-badge" id="baseCount">0</span>
-          </div>
-          <button class="btn btn-add" id="addBaseImages">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-            Add Images
-          </button>
-        </div>
-        <div class="image-grid" id="baseImageGrid">
-          <div class="empty-state">
-            <div class="empty-icon">
-              <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="4" y="8" width="32" height="24" rx="3" stroke="currentColor" stroke-width="1.5"/><circle cx="14" cy="17" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M4 27l8-8 6 6 4-4 10 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <!-- Section 1: Base Images -->
+        <section class="panel">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h2 class="panel-title">Base Images</h2>
+              <span class="count-badge" id="baseCount">0</span>
             </div>
-            <p class="empty-label">No base images selected</p>
-            <p class="empty-hint">Curtain photos, renders or flats</p>
+            <button class="btn btn-add" id="addBaseImages">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              Add Images
+            </button>
           </div>
-        </div>
-      </section>
-
-      <!-- Section 2: Design Patterns -->
-      <section class="panel">
-        <div class="panel-header">
-          <div class="panel-title-group">
-            <h2 class="panel-title">Design Patterns</h2>
-            <span class="count-badge" id="patternCount">0</span>
-          </div>
-          <button class="btn btn-add" id="addPatternImages">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-            Add Patterns
-          </button>
-        </div>
-        <div class="image-grid" id="patternImageGrid">
-          <div class="empty-state">
-            <div class="empty-icon">
-              <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="4" y="4" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="22" y="4" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="4" y="22" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="22" y="22" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/></svg>
+          <div class="image-grid" id="baseImageGrid">
+            <div class="empty-state">
+              <div class="empty-icon">
+                <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="4" y="8" width="32" height="24" rx="3" stroke="currentColor" stroke-width="1.5"/><circle cx="14" cy="17" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M4 27l8-8 6 6 4-4 10 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+              <p class="empty-label">No base images selected</p>
+              <p class="empty-hint">Curtain photos, renders or flats</p>
             </div>
-            <p class="empty-label">No patterns selected</p>
-            <p class="empty-hint">Fabric prints, textures or designs</p>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <!-- Section 3: Settings & Run -->
-      <section class="panel panel-settings">
-        <h2 class="panel-title" style="margin-bottom: 20px;">Settings</h2>
-
-        <div class="form-group">
-          <label class="form-label">Catalogue Name</label>
-          <input type="text" id="catalogueName" placeholder="e.g. SpringCollection2025" class="input" spellcheck="false">
-          <p class="form-hint">Used as prefix for all output folder names</p>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Destination Folder</label>
-          <div class="folder-row">
-            <input type="text" id="destinationPath" placeholder="No folder selected" class="input input-readonly" readonly>
-            <button class="btn btn-sm" id="selectDestination">Browse</button>
+        <!-- Section 2: Design Patterns -->
+        <section class="panel">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h2 class="panel-title">Design Patterns</h2>
+              <span class="count-badge" id="patternCount">0</span>
+            </div>
+            <button class="btn btn-add" id="addPatternImages">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              Add Patterns
+            </button>
           </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Pattern Scale</label>
-          <select id="scaleMode" class="input select-input">
-            <option value="a4-scan">A4 Scan — Realistic standard drape proportions</option>
-            <option value="fine-detail">Fine Detail — Micro-tiled for dense patterns</option>
-            <option value="large-accent">Large Accent — Prominent large-scale motifs</option>
-          </select>
-          <p class="form-hint">Controls how the fabric pattern is tiled onto the curtain</p>
-        </div>
-
-        <div class="summary-box">
-          <div class="summary-row">
-            <span class="summary-label">Base images</span>
-            <span class="summary-value" id="summaryBase">0</span>
+          <div class="image-grid" id="patternImageGrid">
+            <div class="empty-state">
+              <div class="empty-icon">
+                <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="4" y="4" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="22" y="4" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="4" y="22" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="22" y="22" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/></svg>
+              </div>
+              <p class="empty-label">No patterns selected</p>
+              <p class="empty-hint">Fabric prints, textures or designs</p>
+            </div>
           </div>
-          <div class="summary-row">
-            <span class="summary-label">Patterns</span>
-            <span class="summary-value" id="summaryPattern">0</span>
-          </div>
-          <div class="summary-divider"></div>
-          <div class="summary-row">
-            <span class="summary-label">Total API calls</span>
-            <span class="summary-value summary-total" id="summaryTotal">0</span>
-          </div>
-        </div>
+        </section>
 
-        <button class="btn btn-run" id="runBtn" disabled>
-          <span id="runBtnText">Generate Mockups</span>
-        </button>
-      </section>
+        <!-- Section 3: Settings & Run -->
+        <section class="panel panel-settings">
+          <h2 class="panel-title" style="margin-bottom: 20px;">Settings</h2>
 
-    </main>
+          <div class="form-group">
+            <label class="form-label">Catalogue Name</label>
+            <input type="text" id="catalogueName" placeholder="e.g. SpringCollection2025" class="input" spellcheck="false">
+            <p class="form-hint">Used as prefix for all output folder names</p>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Destination Folder</label>
+            <div class="folder-row">
+              <input type="text" id="destinationPath" placeholder="No folder selected" class="input input-readonly" readonly>
+              <button class="btn btn-sm" id="selectDestination">Browse</button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Pattern Scale</label>
+            <select id="scaleMode" class="input select-input">
+              <option value="a4-scan">A4 Scan — Realistic standard drape proportions</option>
+              <option value="fine-detail">Fine Detail — Micro-tiled for dense patterns</option>
+              <option value="large-accent">Large Accent — Prominent large-scale motifs</option>
+            </select>
+            <p class="form-hint">Controls how the fabric pattern is tiled onto the curtain</p>
+          </div>
+
+          <div class="summary-box">
+            <div class="summary-row">
+              <span class="summary-label">Base images</span>
+              <span class="summary-value" id="summaryBase">0</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">Patterns</span>
+              <span class="summary-value" id="summaryPattern">0</span>
+            </div>
+            <div class="summary-divider"></div>
+            <div class="summary-row">
+              <span class="summary-label">Total API calls</span>
+              <span class="summary-value summary-total" id="summaryTotal">0</span>
+            </div>
+          </div>
+
+          <button class="btn btn-run" id="runBtn" disabled>
+            <span id="runBtnText">Generate Mockups</span>
+          </button>
+        </section>
+
+      </main>
+    </div>
+
+    <!-- ═══ KD Mockup Generator Flow ═══ -->
+    <div id="flowKD" class="flow">
+      <main class="main kd-main">
+
+        <!-- KD Section 1: Base Images & Masks -->
+        <section class="panel">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h2 class="panel-title">Base Images &amp; Masks</h2>
+              <span class="count-badge" id="kdBaseCount">0</span>
+            </div>
+            <button class="btn btn-add" id="kdAddBaseImages">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              Add Base Images
+            </button>
+          </div>
+          <div class="pair-list" id="kdBasePairList">
+            <div class="empty-state">
+              <div class="empty-icon">
+                <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="4" y="8" width="32" height="24" rx="3" stroke="currentColor" stroke-width="1.5"/><circle cx="14" cy="17" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M4 27l8-8 6 6 4-4 10 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+              <p class="empty-label">No base images added</p>
+              <p class="empty-hint">Add curtain images, then optionally pair each with a mask</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- KD Section 2: Configuration -->
+        <section class="panel panel-settings">
+          <h2 class="panel-title" style="margin-bottom: 20px;">Configuration</h2>
+
+          <div class="form-group">
+            <label class="form-label">Catalogue Name</label>
+            <input type="text" id="kdCatalogueName" placeholder="e.g. SpringCollection2025" class="input" spellcheck="false">
+            <p class="form-hint">Used as prefix for all output folder names</p>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Destination Folder</label>
+            <div class="folder-row">
+              <input type="text" id="kdDestinationPath" placeholder="No folder selected" class="input input-readonly" readonly>
+              <button class="btn btn-sm" id="kdSelectDestination">Browse</button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Scale Mode</label>
+            <select id="kdScaleMode" class="input select-input">
+              <option value="a4-scan">A4 Scan — Realistic standard drape proportions</option>
+              <option value="fine-detail">Fine Detail — Micro-tiled for dense patterns</option>
+              <option value="large-accent">Large Accent — Prominent large-scale motifs</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Pattern Rotation</label>
+            <select id="kdPatternRotation" class="input select-input">
+              <option value="0">0° — No rotation</option>
+              <option value="90">90° — Quarter turn clockwise</option>
+              <option value="180">180° — Half turn</option>
+              <option value="270">270° — Three-quarter turn clockwise</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Pattern Tile Width <span class="optional-tag">mm</span></label>
+            <input type="number" id="kdPatternTileWidthMm" placeholder="210" class="input" min="1" step="0.1" value="210">
+            <p class="form-hint">Physical width of one pattern tile (A4 = 210 mm)</p>
+          </div>
+
+          <div class="summary-box">
+            <div class="summary-row">
+              <span class="summary-label">Base images</span>
+              <span class="summary-value" id="kdSummaryBase">0</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">With masks</span>
+              <span class="summary-value" id="kdSummaryMasks">0</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">Patterns</span>
+              <span class="summary-value" id="kdSummaryPattern">0</span>
+            </div>
+            <div class="summary-divider"></div>
+            <div class="summary-row">
+              <span class="summary-label">Total renders</span>
+              <span class="summary-value summary-total" id="kdSummaryTotal">0</span>
+            </div>
+          </div>
+
+          <button class="btn btn-run" id="kdRunBtn" disabled>
+            <span id="kdRunBtnText">Generate Mockups</span>
+          </button>
+        </section>
+
+        <!-- KD Section 3: Pattern Images -->
+        <section class="panel">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h2 class="panel-title">Pattern Images</h2>
+              <span class="count-badge" id="kdPatternCount">0</span>
+            </div>
+            <button class="btn btn-add" id="kdAddPatternImages">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              Add Patterns
+            </button>
+          </div>
+          <div class="image-grid" id="kdPatternImageGrid">
+            <div class="empty-state">
+              <div class="empty-icon">
+                <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="4" y="4" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="22" y="4" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="4" y="22" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="22" y="22" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/></svg>
+              </div>
+              <p class="empty-label">No patterns selected</p>
+              <p class="empty-hint">Fabric prints, textures or designs</p>
+            </div>
+          </div>
+        </section>
+
+      </main>
+    </div>
+
+    <!-- ═══ Seamless Pattern Generator Flow ═══ -->
+    <div id="flowSP" class="flow">
+      <main class="main">
+
+        <!-- SP Section 1: Source Images -->
+        <section class="panel">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h2 class="panel-title">Source Images</h2>
+              <span class="count-badge" id="spSourceCount">0</span>
+            </div>
+            <button class="btn btn-add" id="spAddSourceImages">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              Add Images
+            </button>
+          </div>
+          <div class="sp-source-list" id="spSourceList">
+            <div class="empty-state">
+              <div class="empty-icon">
+                <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="4" y="8" width="32" height="24" rx="3" stroke="currentColor" stroke-width="1.5"/><circle cx="14" cy="17" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M4 27l8-8 6 6 4-4 10 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+              <p class="empty-label">No source images selected</p>
+              <p class="empty-hint">Add fabric scans, then choose a pattern type for each</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- SP Section 2: Settings & Run -->
+        <section class="panel panel-settings">
+          <h2 class="panel-title" style="margin-bottom: 20px;">Settings</h2>
+
+          <div class="form-group">
+            <label class="form-label">Catalogue Name</label>
+            <input type="text" id="spCatalogueName" placeholder="e.g. SpringTiles2025" class="input" spellcheck="false">
+            <p class="form-hint">Output files go into a subfolder with this name</p>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Destination Folder</label>
+            <div class="folder-row">
+              <input type="text" id="spDestinationPath" placeholder="No folder selected" class="input input-readonly" readonly>
+              <button class="btn btn-sm" id="spSelectDestination">Browse</button>
+            </div>
+          </div>
+
+          <div class="summary-box">
+            <div class="summary-row">
+              <span class="summary-label">Source images</span>
+              <span class="summary-value" id="spSummarySource">0</span>
+            </div>
+            <div class="summary-divider"></div>
+            <div class="summary-row">
+              <span class="summary-label">Total API calls</span>
+              <span class="summary-value summary-total" id="spSummaryTotal">0</span>
+            </div>
+          </div>
+
+          <div class="sp-run-buttons" id="spRunButtons">
+            <button class="btn btn-run" id="spRunPendingBtn" disabled>Generate Pending</button>
+            <button class="btn btn-run btn-secondary" id="spRunAllBtn" disabled>Generate All</button>
+          </div>
+          <button class="btn btn-run btn-danger" id="spStopBtn" style="display:none">■ Stop Batch</button>
+        </section>
+
+      </main>
+    </div>
+
+    <!-- ─── Crop Pattern Flow ─── -->
+    <div id="flowCrop" class="flow">
+      <main class="main">
+
+        <!-- Crop canvas panel -->
+        <section class="panel crop-canvas-panel">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h2 class="panel-title">Crop Canvas</h2>
+              <span class="count-badge">2400 × 2400 px</span>
+            </div>
+            <button class="btn btn-add" id="cropSelectBtn">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              Select Image
+            </button>
+          </div>
+
+          <!-- Drop zone / work area -->
+          <div class="crop-work-area" id="cropWorkArea">
+            <div class="empty-state" id="cropEmptyState">
+              <div class="empty-icon">
+                <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="4" y="8" width="32" height="24" rx="3" stroke="currentColor" stroke-width="1.5"/><path d="M12 18l6 6 4-4 8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="14" cy="16" r="2" stroke="currentColor" stroke-width="1.5"/><rect x="14" y="22" width="12" height="8" rx="1" stroke="currentColor" stroke-width="1.3" stroke-dasharray="2 2"/></svg>
+              </div>
+              <p class="empty-label">No image selected</p>
+              <p class="empty-hint">Select an image or drag & drop it here — a 2400 × 2400 px frame will appear for positioning</p>
+            </div>
+            <canvas id="cropCanvas" style="display:none"></canvas>
+          </div>
+        </section>
+
+        <!-- Settings panel -->
+        <section class="panel panel-settings">
+          <h2 class="panel-title" style="margin-bottom: 20px;">Crop Settings</h2>
+
+          <div class="form-group">
+            <label class="form-label">Crop Frame</label>
+            <div class="crop-spec-box">
+              <span class="crop-spec-value">2400 × 2400</span>
+              <span class="crop-spec-unit">px · square</span>
+            </div>
+          </div>
+
+          <div class="form-group" id="cropFileInfoGroup" style="display:none">
+            <label class="form-label">Source Image</label>
+            <div class="crop-file-name" id="cropFileName">—</div>
+            <div class="crop-dimensions" id="cropDimensions">—</div>
+          </div>
+
+          <div class="form-group" id="cropPositionGroup" style="display:none">
+            <label class="form-label">Frame Position</label>
+            <div class="crop-pos-display" id="cropPosDisplay">X: 0, Y: 0</div>
+            <p class="form-hint">Drag the white frame on the canvas to reposition it</p>
+          </div>
+
+          <div class="summary-box" id="cropSummaryBox" style="display:none">
+            <div class="summary-row">
+              <span class="summary-label">Image size</span>
+              <span class="summary-value" id="cropSummarySize">—</span>
+            </div>
+            <div class="summary-divider"></div>
+            <div class="summary-row">
+              <span class="summary-label">Output size</span>
+              <span class="summary-value">2400 × 2400 px</span>
+            </div>
+          </div>
+
+          <button class="btn btn-run" id="cropDownloadBtn" disabled>
+            Crop &amp; Save
+          </button>
+        </section>
+
+      </main>
+    </div>
 
     <!-- Progress Bar -->
     <div class="progress-footer">

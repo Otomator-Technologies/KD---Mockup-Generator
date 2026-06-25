@@ -3,7 +3,9 @@ const path = require('path');
 const fs = require('fs');
 const https = require('https');
 
-const API_URL = 'https://fabric-fusion-218867286180.asia-southeast1.run.app/api/apply-pattern';
+const API_URL    = 'https://fabric-fusion-218867286180.asia-southeast1.run.app/api/apply-pattern';
+const KD_API_URL = 'https://mockup-gen.kineticdrapes.com/api/apply-pattern';
+const SP_API_URL = 'https://kd-seamless-pattern-gen-218867286180.asia-southeast1.run.app/api/synthesize-pattern';
 const configPath = path.join(app.getPath('userData'), 'config.json');
 
 // ─── Logger ──────────────────────────────────────────────────────────────────
@@ -382,4 +384,371 @@ ipcMain.handle('generate-mockups', async (event, { apiKey, baseImages, patternIm
   log('GEN', '─'.repeat(56));
 
   return { completed, total, errors };
+});
+
+// ─── IPC: Select Single Image ─────────────────────────────────────────────────
+
+ipcMain.handle('select-single-image', async () => {
+  log('IPC', 'select-single-image → opening dialog');
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile'],
+    filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
+  });
+  if (result.canceled || !result.filePaths.length) {
+    log('IPC', 'select-single-image → cancelled');
+    return null;
+  }
+  log('IPC', `select-single-image → ${path.basename(result.filePaths[0])}`);
+  return result.filePaths[0];
+});
+
+// ─── IPC: KD Config ──────────────────────────────────────────────────────────
+
+ipcMain.handle('get-kd-config', () => {
+  const cfg = loadConfig();
+  const result = {
+    scaleMode:          cfg.kdScaleMode          || 'a4-scan',
+    patternRotation:    cfg.kdPatternRotation     ?? 0,
+    patternTileWidthMm: cfg.kdPatternTileWidthMm || 210
+  };
+  log('IPC', `get-kd-config → ${JSON.stringify(result)}`);
+  return result;
+});
+
+ipcMain.handle('save-kd-config', (_, cfg) => {
+  log('IPC', `save-kd-config → ${JSON.stringify(cfg)}`);
+  saveConfig({
+    kdScaleMode:          cfg.scaleMode,
+    kdPatternRotation:    cfg.patternRotation,
+    kdPatternTileWidthMm: cfg.patternTileWidthMm
+  });
+});
+
+ipcMain.handle('save-kd-base-pairs', (_, pairs) => {
+  saveConfig({ kdBasePairs: pairs });
+  log('IPC', `save-kd-base-pairs → ${pairs.length} pair(s) saved`);
+});
+
+ipcMain.handle('get-kd-base-pairs', () => {
+  const saved = loadConfig().kdBasePairs || [];
+  // Filter out entries whose base file no longer exists; clear stale mask paths
+  const valid = saved.reduce((acc, { base, mask, curtainWidthMm }) => {
+    if (!fs.existsSync(base)) {
+      logWarn('IPC', `get-kd-base-pairs: base file missing, skipping — ${path.basename(base)}`);
+      return acc;
+    }
+    const safeMask = (mask && fs.existsSync(mask)) ? mask : null;
+    if (mask && !safeMask) {
+      logWarn('IPC', `get-kd-base-pairs: mask file missing, cleared — ${path.basename(mask)}`);
+    }
+    acc.push({ base, mask: safeMask, curtainWidthMm: curtainWidthMm || '' });
+    return acc;
+  }, []);
+  log('IPC', `get-kd-base-pairs → ${valid.length}/${saved.length} pair(s) valid`);
+  return valid;
+});
+
+// ─── IPC: KD Generate ────────────────────────────────────────────────────────
+
+ipcMain.handle('generate-mockups-kd', async (event, {
+  baseImagePairs, patternImages, destination, catalogueName,
+  scaleMode, patternRotation, patternTileWidthMm
+}) => {
+  const total = baseImagePairs.length * patternImages.length;
+
+  log('KD', '─'.repeat(56));
+  log('KD', `Batch start — ${baseImagePairs.length} base × ${patternImages.length} patterns = ${total} calls`);
+  log('KD', `Catalogue: "${catalogueName}" | Scale: ${scaleMode} | Rotation: ${patternRotation}°`);
+  log('KD', `Tile width: ${patternTileWidthMm} mm | Curtain width: per image`);
+  log('KD', `Destination: ${destination}`);
+  log('KD', '─'.repeat(56));
+
+  let completed = 0;
+  const errors = [];
+  const batchStart = Date.now();
+
+  for (let pi = 0; pi < patternImages.length; pi++) {
+    const patternPath = patternImages[pi];
+    const patternBaseName = path.basename(patternPath, path.extname(patternPath));
+    const folderName = sanitizeName(catalogueName) + sanitizeName(patternBaseName);
+    const outputDir = path.join(destination, folderName);
+
+    log('KD', `Pattern ${pi + 1}/${patternImages.length}: "${path.basename(patternPath)}" → /${folderName}`);
+
+    try {
+      fs.mkdirSync(outputDir, { recursive: true });
+      log('FS', `Output dir: ${outputDir}`);
+    } catch (err) {
+      logError('FS', `Cannot create output dir: ${err.message}`);
+    }
+
+    let imageIndex = 1;
+
+    for (let bi = 0; bi < baseImagePairs.length; bi++) {
+      const { base: basePath, mask: maskPath, curtainWidthMm } = baseImagePairs[bi];
+      const baseFile    = path.basename(basePath);
+      const patternFile = path.basename(patternPath);
+      const callNum     = completed + 1;
+
+      log('KD', `[${callNum}/${total}] ${baseFile}${maskPath ? ' (masked)' : ''}${curtainWidthMm ? ` [${curtainWidthMm}mm]` : ''} + ${patternFile}`);
+
+      event.sender.send('progress-update', {
+        completed,
+        total,
+        status:  'running',
+        message: `Generating ${callNum}/${total}: ${baseFile} + ${patternFile}`
+      });
+
+      try {
+        const curtainBuf = fs.readFileSync(basePath);
+        const patternBuf = fs.readFileSync(patternPath);
+        log('FS', `Read: ${baseFile} (${kb(curtainBuf.length)}) + ${patternFile} (${kb(patternBuf.length)})`);
+
+        const body = {
+          curtainBase64:    curtainBuf.toString('base64'),
+          curtainMimeType:  getMimeType(basePath),
+          patternBase64:    patternBuf.toString('base64'),
+          patternMimeType:  getMimeType(patternPath),
+          scaleMode:        scaleMode || 'a4-scan',
+          patternRotation:  parseInt(patternRotation) || 0,
+          patternRealWidthMm: parseFloat(patternTileWidthMm) || 210
+        };
+
+        if (maskPath) {
+          const maskBuf = fs.readFileSync(maskPath);
+          body.maskBase64   = maskBuf.toString('base64');
+          body.maskMimeType = getMimeType(maskPath);
+          log('FS', `Mask: ${path.basename(maskPath)} (${kb(maskBuf.length)})`);
+        }
+
+        if (curtainWidthMm && parseFloat(curtainWidthMm) > 0) {
+          body.curtainRealWidthMm = parseFloat(curtainWidthMm);
+        }
+
+        const data = await postJson(KD_API_URL, body);
+
+        if (!data.imageBase64) {
+          throw new Error('KD API response missing imageBase64 field');
+        }
+
+        const outputBuf  = Buffer.from(data.imageBase64, 'base64');
+        const outputPath = path.join(outputDir, `${imageIndex}.png`);
+        fs.writeFileSync(outputPath, outputBuf);
+
+        completed++;
+        logSuccess('KD', `✓ [${callNum}/${total}] Saved ${imageIndex}.png (${kb(outputBuf.length)}) → ${folderName}`);
+
+        event.sender.send('progress-update', {
+          completed,
+          total,
+          status:  'success',
+          message: `✓ Saved ${imageIndex}.png → ${folderName}`
+        });
+
+      } catch (err) {
+        const friendly = friendlyError(err);
+        logError('KD', `✗ [${callNum}/${total}] ${baseFile} + ${patternFile}: ${err.message}`);
+        logError('KD', `  → ${friendly}`);
+
+        errors.push({ base: baseFile, pattern: patternFile, error: friendly });
+        completed++;
+
+        event.sender.send('progress-update', {
+          completed,
+          total,
+          status:  'error',
+          message: `✗ ${baseFile} + ${patternFile}: ${friendly}`
+        });
+      }
+
+      imageIndex++;
+    }
+  }
+
+  const batchMs      = Date.now() - batchStart;
+  const successCount = completed - errors.length;
+
+  log('KD', '─'.repeat(56));
+  if (errors.length === 0) {
+    logSuccess('KD', `Batch done in ${(batchMs / 1000).toFixed(1)}s — ${successCount}/${total} succeeded`);
+  } else {
+    logWarn('KD', `Batch done in ${(batchMs / 1000).toFixed(1)}s — ${successCount}/${total} succeeded, ${errors.length} failed`);
+    errors.forEach(e => logError('KD', `  ✗ ${e.base} + ${e.pattern}: ${e.error}`));
+  }
+  log('KD', '─'.repeat(56));
+
+  return { completed, total, errors };
+});
+
+// ─── IPC: Seamless Pattern Generate ──────────────────────────────────────────
+
+ipcMain.handle('generate-seamless-patterns', async (event, {
+  sourceImages, destination, catalogueName, apiKey
+}) => {
+  const total = sourceImages.length;
+
+  log('SP', '─'.repeat(56));
+  log('SP', `Batch start — ${total} image(s) → seamless tiles`);
+  log('SP', `Catalogue: "${catalogueName}"`);
+  log('SP', `Destination: ${destination}`);
+  log('SP', '─'.repeat(56));
+
+  const outputDir = path.join(destination, sanitizeName(catalogueName));
+  try {
+    fs.mkdirSync(outputDir, { recursive: true });
+    log('FS', `Output dir: ${outputDir}`);
+  } catch (err) {
+    logError('FS', `Cannot create output dir: ${err.message}`);
+  }
+
+  let completed = 0;
+  const errors  = [];
+  const batchStart = Date.now();
+
+  for (let i = 0; i < sourceImages.length; i++) {
+    const { path: srcPath, patternType } = sourceImages[i];
+    const srcFile  = path.basename(srcPath);
+    const callNum  = i + 1;
+
+    log('SP', `[${callNum}/${total}] ${srcFile} | type: ${patternType || '(auto)'}`);
+
+    event.sender.send('progress-update', {
+      completed, total, status: 'running',
+      message: `Synthesising ${callNum}/${total}: ${srcFile}`
+    });
+    event.sender.send('sp-image-status', { index: i, status: 'running' });
+
+    try {
+      const srcBuf   = fs.readFileSync(srcPath);
+      const mimeType = getMimeType(srcPath);
+      const dataUrl  = `data:${mimeType};base64,${srcBuf.toString('base64')}`;
+      log('FS', `Read: ${srcFile} (${kb(srcBuf.length)})`);
+
+      const body = { imageBase64: dataUrl, apiKey: apiKey || '' };
+      if (patternType && patternType.trim()) body.patternPrompt = patternType.trim();
+
+      const data = await postJson(SP_API_URL, body);
+
+      if (data.error) throw new Error(data.error);
+      if (!data.image) throw new Error('API response missing image field');
+
+      const match = data.image.match(/^data:(image\/(\w+));base64,(.+)$/s);
+      if (!match) throw new Error('API returned invalid image data URL');
+      const [, , fmt, b64] = match;
+
+      const baseName   = path.basename(srcPath, path.extname(srcPath));
+      const outputPath = path.join(outputDir, `${sanitizeName(baseName)}-seamless.${fmt}`);
+      const outputBuf  = Buffer.from(b64, 'base64');
+      fs.writeFileSync(outputPath, outputBuf);
+
+      completed++;
+      logSuccess('SP', `✓ [${callNum}/${total}] Saved ${path.basename(outputPath)} (${kb(outputBuf.length)})`);
+
+      event.sender.send('progress-update', {
+        completed, total, status: 'success',
+        message: `✓ Saved ${path.basename(outputPath)}`
+      });
+      event.sender.send('sp-image-status', { index: i, status: 'done' });
+
+    } catch (err) {
+      const friendly = friendlyError(err);
+      logError('SP', `✗ [${callNum}/${total}] ${srcFile}: ${err.message}`);
+      logError('SP', `  → ${friendly}`);
+
+      errors.push({ source: srcFile, error: friendly });
+      completed++;
+
+      event.sender.send('progress-update', {
+        completed, total, status: 'error',
+        message: `✗ ${srcFile}: ${friendly}`
+      });
+      event.sender.send('sp-image-status', { index: i, status: 'error', error: friendly });
+    }
+  }
+
+  const batchMs      = Date.now() - batchStart;
+  const successCount = completed - errors.length;
+
+  log('SP', '─'.repeat(56));
+  if (errors.length === 0) {
+    logSuccess('SP', `Batch done in ${(batchMs / 1000).toFixed(1)}s — ${successCount}/${total} succeeded`);
+  } else {
+    logWarn('SP', `Batch done in ${(batchMs / 1000).toFixed(1)}s — ${successCount}/${total} succeeded, ${errors.length} failed`);
+    errors.forEach(e => logError('SP', `  ✗ ${e.source}: ${e.error}`));
+  }
+  log('SP', '─'.repeat(56));
+
+  return { completed, total, errors };
+});
+
+// ─── Crop Pattern IPC ─────────────────────────────────────────────────────────
+
+ipcMain.handle('read-file-as-data-url', (_event, filePath) => {
+  try {
+    const buf      = fs.readFileSync(filePath);
+    const mimeType = getMimeType(filePath);
+    return { success: true, dataUrl: `data:${mimeType};base64,${buf.toString('base64')}` };
+  } catch (err) {
+    logError('Crop', `Cannot read file: ${err.message}`);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('save-cropped-image', async (_event, { dataUrl, defaultName }) => {
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+    defaultPath: defaultName,
+    filters: [
+      { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] },
+      { name: 'All Files', extensions: ['*'] }
+    ]
+  });
+  if (canceled || !filePath) return { success: false, cancelled: true };
+  try {
+    const b64 = dataUrl.replace(/^data:image\/\w+;base64,/, '');
+    fs.writeFileSync(filePath, Buffer.from(b64, 'base64'));
+    logSuccess('Crop', `Saved: ${filePath}`);
+    return { success: true, savedPath: filePath };
+  } catch (err) {
+    logError('Crop', `Save failed: ${err.message}`);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('generate-seamless-pattern-single', async (_event, {
+  sourcePath, patternType, destination, catalogueName, apiKey
+}) => {
+  const outputDir = path.join(destination, sanitizeName(catalogueName));
+  try { fs.mkdirSync(outputDir, { recursive: true }); } catch (_) {}
+
+  const srcFile = path.basename(sourcePath);
+  log('SP', `[Retry] ${srcFile} | type: ${patternType || '(auto)'}`);
+
+  try {
+    const srcBuf   = fs.readFileSync(sourcePath);
+    const mimeType = getMimeType(sourcePath);
+    const dataUrl  = `data:${mimeType};base64,${srcBuf.toString('base64')}`;
+
+    const body = { imageBase64: dataUrl, apiKey: apiKey || '' };
+    if (patternType && patternType.trim()) body.patternPrompt = patternType.trim();
+
+    const data = await postJson(SP_API_URL, body);
+    if (data.error) throw new Error(data.error);
+    if (!data.image) throw new Error('API response missing image field');
+
+    const match = data.image.match(/^data:(image\/(\w+));base64,(.+)$/s);
+    if (!match) throw new Error('API returned invalid image data URL');
+    const [, , fmt, b64] = match;
+
+    const baseName   = path.basename(sourcePath, path.extname(sourcePath));
+    const outputPath = path.join(outputDir, `${sanitizeName(baseName)}-seamless.${fmt}`);
+    const outputBuf  = Buffer.from(b64, 'base64');
+    fs.writeFileSync(outputPath, outputBuf);
+
+    logSuccess('SP', `✓ [Retry] Saved ${path.basename(outputPath)} (${kb(outputBuf.length)})`);
+    return { success: true };
+  } catch (err) {
+    const friendly = friendlyError(err);
+    logError('SP', `✗ [Retry] ${srcFile}: ${err.message}`);
+    return { success: false, error: friendly };
+  }
 });
