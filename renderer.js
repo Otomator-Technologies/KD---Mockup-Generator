@@ -24,18 +24,21 @@ let currentEngine = 'google'; // 'google' | 'kd' | 'sp' | 'crop'
 
 // ─── Crop State ───────────────────────────────────────────────────────────────
 const cropState = {
-  imagePath: null,
-  image:     null,   // HTMLImageElement
-  scale:     1,      // display-to-actual ratio
-  frameX:    0,      // frame position in display pixels
-  frameY:    0,
+  images:      [],   // [{ path, dataUrl, frameX, frameY, rotation, saved }]
+  activeIndex: null,
+  image:       null, // current HTMLImageElement
+  scale:       1,
+  frameX:      0,
+  frameY:      0,
+  rotation:    0,    // degrees, applied to image for scan correction
+  destination: null, // output folder for auto-save
   isDragging:      false,
   dragStartX:      0,
   dragStartY:      0,
   dragStartFrameX: 0,
   dragStartFrameY: 0,
 };
-const CROP_FRAME_PX = 2400;
+let cropFramePx = 2400;
 
 // ─── SP Pattern Options ───────────────────────────────────────────────────────
 
@@ -307,18 +310,21 @@ function bindEvents() {
 
   // ── KD: Pattern images ──
   document.getElementById('kdAddPatternImages').addEventListener('click', async () => {
-    log('KD', 'Opening image picker for KD patterns');
     const paths = await window.electronAPI.selectImages();
-    if (!paths.length) { log('KD', 'Image picker cancelled'); return; }
+    if (!paths.length) return;
 
-    const existing = new Set(kdState.patternImages);
+    const defaultWidth = document.getElementById('kdPatternTileWidthMm').value || '210';
+    const existing = new Set(kdState.patternImages.map(p => p.path));
     let dupes = 0;
     paths.forEach(p => {
       if (existing.has(p)) { dupes++; return; }
-      kdState.patternImages.push(p);
+      const item = { path: p, tileWidthMm: defaultWidth, resolution: null };
+      kdState.patternImages.push(item);
+      const img = new Image();
+      img.onload = () => { item.resolution = { w: img.naturalWidth, h: img.naturalHeight }; renderKdPatternGrid(); };
+      img.src = encodeURI('file://' + p);
     });
     const added = paths.length - dupes;
-
     log('KD', `Patterns: +${added} added${dupes ? `, ${dupes} duplicate(s) skipped` : ''} → total ${kdState.patternImages.length}`);
     renderKdPatternGrid();
     updateCount('kdPatternCount', kdState.patternImages.length);
@@ -472,16 +478,61 @@ function renderGrid(containerId, images, type, onRemove) {
   });
 }
 
-// ─── KD: Pattern Grid ────────────────────────────────────────────────────────
+// ─── KD: Pattern List ────────────────────────────────────────────────────────
 
 function renderKdPatternGrid() {
-  renderGrid('kdPatternImageGrid', kdState.patternImages, 'kd-pattern', (idx) => {
-    const removed = kdState.patternImages.splice(idx, 1)[0];
-    log('KD', `Removed pattern: ${removed.split('/').pop()} → total ${kdState.patternImages.length}`);
-    renderKdPatternGrid();
-    updateCount('kdPatternCount', kdState.patternImages.length);
-    updateKdSummary();
-    updateKdRunButton();
+  const container = document.getElementById('kdPatternList');
+  updateCount('kdPatternCount', kdState.patternImages.length);
+
+  if (kdState.patternImages.length === 0) {
+    container.innerHTML = `<div class="empty-state">
+      <div class="empty-icon"><svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="4" y="4" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="22" y="4" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="4" y="22" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="22" y="22" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/></svg></div>
+      <p class="empty-label">No patterns selected</p>
+      <p class="empty-hint">Fabric prints, textures or designs</p>
+    </div>`;
+    return;
+  }
+
+  const dis = kdState.isRunning ? 'disabled' : '';
+  container.innerHTML = kdState.patternImages.map((item, i) => {
+    const name    = item.path.split('/').pop();
+    const fileUrl = encodeURI('file://' + item.path);
+    const resText = item.resolution ? `${item.resolution.w} × ${item.resolution.h} px` : '—';
+    return `<div class="pair-item" data-index="${i}">
+      <div class="pair-base-section">
+        <img src="${fileUrl}" alt="${escapeHtml(name)}" class="pair-thumb" draggable="false">
+        <button class="kd-pattern-remove pair-base-remove" data-index="${i}" title="Remove" ${dis}>×</button>
+      </div>
+      <div class="pair-footer">
+        <div class="pair-filename" title="${escapeHtml(name)}">${escapeHtml(name)}</div>
+        <div class="kd-pattern-res">${resText}</div>
+        <div class="pair-width">
+          <span class="pair-width-label">Tile:</span>
+          <input type="number" class="pair-width-input kd-pattern-tile-input" data-index="${i}"
+            placeholder="210" min="1" step="0.1"
+            value="${escapeHtml(item.tileWidthMm || '')}" ${dis}>
+          <span class="pair-width-unit">mm</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  container.querySelectorAll('.kd-pattern-tile-input').forEach(input => {
+    input.addEventListener('input', (e) => {
+      kdState.patternImages[parseInt(e.currentTarget.dataset.index)].tileWidthMm = e.currentTarget.value;
+    });
+  });
+
+  container.querySelectorAll('.kd-pattern-remove').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const idx = parseInt(e.currentTarget.dataset.index);
+      const removed = kdState.patternImages.splice(idx, 1)[0];
+      log('KD', `Removed pattern: ${removed.path.split('/').pop()} → total ${kdState.patternImages.length}`);
+      renderKdPatternGrid();
+      updateKdSummary();
+      updateKdRunButton();
+    });
   });
 }
 
@@ -511,7 +562,10 @@ function renderKdPairList() {
       : `<button class="pair-add-mask btn btn-sm" data-index="${i}">+ Mask</button>`;
 
     return `<div class="pair-item" data-index="${i}">
-      <img src="${baseUrl}" alt="${escapeHtml(baseName)}" class="pair-thumb" draggable="false">
+      <div class="pair-base-section">
+        <img src="${baseUrl}" alt="${escapeHtml(baseName)}" class="pair-thumb" draggable="false">
+        <button class="pair-base-remove" data-index="${i}" title="Remove">×</button>
+      </div>
       <div class="pair-mask-section">${maskSlot}</div>
       <div class="pair-footer">
         <div class="pair-filename" title="${escapeHtml(baseName)}">${escapeHtml(baseName)}</div>
@@ -523,7 +577,6 @@ function renderKdPairList() {
             title="Curtain width in mm (optional)">
           <span class="pair-width-unit">mm</span>
         </div>
-        <button class="pair-remove" data-index="${i}" title="Remove pair">× Remove</button>
       </div>
     </div>`;
   }).join('');
@@ -567,8 +620,8 @@ function renderKdPairList() {
     });
   });
 
-  // Remove pair
-  container.querySelectorAll('.pair-remove').forEach(btn => {
+  // Remove base image (and its pair)
+  container.querySelectorAll('.pair-base-remove').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const idx = parseInt(e.currentTarget.dataset.index);
@@ -653,7 +706,7 @@ function updateKdRunButton() {
   btn.disabled = !ready;
   if (prev !== btn.disabled) {
     log('KD', ready
-      ? `Run button enabled — ${kdState.baseImagePairs.length}×${kdState.patternImages.length} = ${kdState.baseImagePairs.length * kdState.patternImages.length} renders`
+      ? `Run button enabled — ${kdState.baseImagePairs.length} base × ${kdState.patternImages.length} patterns = ${kdState.baseImagePairs.length * kdState.patternImages.length} renders`
       : 'Run button disabled'
     );
   }
@@ -666,10 +719,16 @@ function setKdRunning(running) {
   ['kdAddBaseImages', 'kdAddPatternImages', 'kdSelectDestination'].forEach(id => {
     document.getElementById(id).disabled = running;
   });
-  document.getElementById('kdCatalogueName').disabled      = running;
-  document.getElementById('kdScaleMode').disabled          = running;
-  document.getElementById('kdPatternRotation').disabled    = running;
-  document.getElementById('kdPatternTileWidthMm').disabled = running;
+  document.getElementById('kdCatalogueName').disabled   = running;
+  document.getElementById('kdScaleMode').disabled       = running;
+  document.getElementById('kdPatternRotation').disabled = running;
+  // Disable per-pattern card controls during generation
+  document.querySelectorAll('.kd-pattern-tile-input, .kd-pattern-remove').forEach(el => {
+    el.disabled = running;
+  });
+  // Re-render to apply disabled state to newly rendered cards
+  renderKdPairList();
+  renderKdPatternGrid();
 }
 
 // ─── Shared UI Helpers ───────────────────────────────────────────────────────
@@ -793,13 +852,13 @@ async function runKdGeneration() {
 
   try {
     const result = await window.electronAPI.generateMockupsKd({
-      baseImagePairs:   kdState.baseImagePairs,
-      patternImages:    kdState.patternImages,
-      destination:      kdState.destination,
+      baseImagePairs:    kdState.baseImagePairs,
+      patternImages:     kdState.patternImages.map(p => ({ path: p.path, tileWidthMm: p.tileWidthMm })),
+      destination:       kdState.destination,
       catalogueName,
       scaleMode,
       patternRotation,
-      patternTileWidthMm
+      patternTileWidthMm // global fallback if per-pattern is blank
     });
 
     const elapsed      = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -1073,23 +1132,19 @@ async function runSpAll() {
 // ─── Crop Pattern ─────────────────────────────────────────────────────────────
 
 function initCropPage() {
-  document.getElementById('cropSelectBtn').addEventListener('click', async () => {
-    const filePath = await window.electronAPI.selectSingleImage();
-    if (filePath) loadCropImage(filePath);
+  document.getElementById('cropAddImagesBtn').addEventListener('click', async () => {
+    const paths = await window.electronAPI.selectImages();
+    if (paths.length) addCropImages(paths);
   });
 
   const workArea = document.getElementById('cropWorkArea');
-  workArea.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'copy';
-    workArea.classList.add('drag-over');
-  });
-  workArea.addEventListener('dragleave', () => workArea.classList.remove('drag-over'));
+  workArea.addEventListener('dragover',  (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; workArea.classList.add('drag-over'); });
+  workArea.addEventListener('dragleave', ()  => workArea.classList.remove('drag-over'));
   workArea.addEventListener('drop', (e) => {
     e.preventDefault();
     workArea.classList.remove('drag-over');
-    const file = e.dataTransfer.files[0];
-    if (file && file.type.startsWith('image/')) loadCropImage(file.path);
+    const paths = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/')).map(f => f.path);
+    if (paths.length) addCropImages(paths);
   });
 
   const canvas = document.getElementById('cropCanvas');
@@ -1098,23 +1153,173 @@ function initCropPage() {
   canvas.addEventListener('mouseup',    onCropMouseUp);
   canvas.addEventListener('mouseleave', onCropMouseUp);
 
-  document.getElementById('cropDownloadBtn').addEventListener('click', performCrop);
+  document.getElementById('cropSaveBtn').addEventListener('click', performCrop);
+  document.getElementById('cropSaveAsIsBtn').addEventListener('click', saveAsIs);
+
+  document.getElementById('cropSelectDestination').addEventListener('click', async () => {
+    const folder = await window.electronAPI.selectDestination();
+    if (!folder) return;
+    cropState.destination = folder;
+    document.getElementById('cropDestinationPath').value = folder;
+    log('Crop', `Destination: ${folder}`);
+  });
+
+  document.getElementById('cropRemoveAllBtn').addEventListener('click', () => {
+    if (!cropState.images.length) return;
+    cropState.images      = [];
+    cropState.activeIndex = null;
+    cropState.image       = null;
+    document.getElementById('cropCanvas').style.display    = 'none';
+    document.getElementById('cropEmptyState').style.display = '';
+    ['cropFileInfoGroup','cropPositionGroup','cropRotationGroup','cropSummaryBox'].forEach(id => {
+      document.getElementById(id).style.display = 'none';
+    });
+    document.getElementById('cropSaveBtn').disabled = true;
+    document.getElementById('cropSaveAsIsBtn').disabled = true;
+    renderCropImageList();
+    log('Crop', 'All images removed');
+  });
+
+  document.getElementById('cropFrameSize').addEventListener('change', (e) => {
+    cropFramePx = parseInt(e.target.value);
+    const label = `${cropFramePx} × ${cropFramePx} px`;
+    document.getElementById('cropFrameBadge').textContent = label;
+    document.getElementById('cropOutputSize').textContent = label;
+    log('Crop', `Frame size: ${cropFramePx}px`);
+
+    // Re-centre frame on active image with new size and redraw
+    if (cropState.image) {
+      const canvas = document.getElementById('cropCanvas');
+      const dispW  = canvas.width, dispH = canvas.height;
+      const fDisp  = Math.round(cropFramePx * cropState.scale);
+      cropState.frameX = Math.max(0, Math.min(cropState.frameX, dispW - fDisp));
+      cropState.frameY = Math.max(0, Math.min(cropState.frameY, dispH - fDisp));
+      drawCropCanvas();
+    }
+  });
+
+  document.getElementById('cropRotationSlider').addEventListener('input', (e) => {
+    syncRotation(parseFloat(e.target.value));
+  });
+  document.getElementById('cropRotationInput').addEventListener('input', (e) => {
+    const v = parseFloat(e.target.value);
+    if (!isNaN(v) && v >= -180 && v <= 180) syncRotation(v);
+  });
+  document.getElementById('cropRotationReset').addEventListener('click', () => {
+    syncRotation(0);
+  });
 }
 
-async function loadCropImage(filePath) {
-  log('Crop', `Loading: ${filePath.split('/').pop()}`);
-  const res = await window.electronAPI.readFileAsDataUrl(filePath);
-  if (!res.success) { showToast(`Cannot read image: ${res.error}`, 5000); return; }
+function syncRotation(deg) {
+  cropState.rotation = deg;
+  document.getElementById('cropRotationSlider').value = deg;
+  document.getElementById('cropRotationInput').value  = parseFloat(deg.toFixed(1));
+  if (cropState.activeIndex !== null) {
+    cropState.images[cropState.activeIndex].rotation = deg;
+  }
+  drawCropCanvas();
+}
+
+function renderCropImageList() {
+  const container = document.getElementById('cropImageList');
+  updateCount('cropImageCount', cropState.images.length);
+  document.getElementById('cropRemoveAllBtn').disabled = cropState.images.length === 0;
+
+  if (cropState.images.length === 0) {
+    container.innerHTML = `<div class="empty-state">
+      <p class="empty-label">No images</p>
+      <p class="empty-hint">Add images to begin cropping</p>
+    </div>`;
+    return;
+  }
+
+  container.innerHTML = cropState.images.map((item, i) => {
+    const name       = item.path.split('/').pop();
+    const isActive   = i === cropState.activeIndex;
+    const statusCls  = item.saved ? 'crop-list-status--done' : isActive ? 'crop-list-status--editing' : '';
+    const statusTxt  = item.saved ? '✓ Saved' : isActive ? 'Editing…' : '○ Pending';
+    const thumbHtml  = item.dataUrl
+      ? `<img class="crop-list-thumb" src="${item.dataUrl}" draggable="false">`
+      : `<div class="crop-list-thumb" style="background:var(--surface);border:1px solid var(--border)"></div>`;
+    return `<div class="crop-list-item${isActive ? ' active' : ''}" data-index="${i}">
+      ${thumbHtml}
+      <div class="crop-list-info">
+        <div class="crop-list-name" title="${escapeHtml(name)}">${escapeHtml(name)}</div>
+        <div class="crop-list-status ${statusCls}">${statusTxt}</div>
+      </div>
+      <button class="crop-list-remove" data-index="${i}" title="Remove">×</button>
+    </div>`;
+  }).join('');
+
+  container.querySelectorAll('.crop-list-item').forEach(el => {
+    el.addEventListener('click', (e) => {
+      if (!e.target.classList.contains('crop-list-remove')) {
+        activateCropImage(parseInt(el.dataset.index));
+      }
+    });
+  });
+
+  container.querySelectorAll('.crop-list-remove').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const idx = parseInt(e.currentTarget.dataset.index);
+      cropState.images.splice(idx, 1);
+      if (cropState.activeIndex === idx) {
+        cropState.activeIndex = null;
+        cropState.image       = null;
+        document.getElementById('cropCanvas').style.display = 'none';
+        document.getElementById('cropEmptyState').style.display = '';
+        ['cropFileInfoGroup','cropPositionGroup','cropRotationGroup','cropSummaryBox'].forEach(id => {
+          document.getElementById(id).style.display = 'none';
+        });
+        document.getElementById('cropSaveBtn').disabled = true;
+    document.getElementById('cropSaveAsIsBtn').disabled = true;
+      } else if (cropState.activeIndex > idx) {
+        cropState.activeIndex--;
+      }
+      renderCropImageList();
+    });
+  });
+}
+
+async function addCropImages(paths) {
+  const existing = new Set(cropState.images.map(img => img.path));
+  let added = 0;
+  paths.forEach(p => {
+    if (existing.has(p)) return;
+    cropState.images.push({ path: p, dataUrl: null, frameX: null, frameY: null, rotation: 0, saved: false });
+    added++;
+  });
+  log('Crop', `+${added} image(s) added${paths.length - added ? `, ${paths.length - added} duplicate(s) skipped` : ''}`);
+  renderCropImageList();
+  if (cropState.activeIndex === null && cropState.images.length > 0) activateCropImage(0);
+}
+
+async function activateCropImage(idx) {
+  // Persist current frame and rotation before switching
+  if (cropState.activeIndex !== null && cropState.image) {
+    cropState.images[cropState.activeIndex].frameX   = cropState.frameX;
+    cropState.images[cropState.activeIndex].frameY   = cropState.frameY;
+    cropState.images[cropState.activeIndex].rotation = cropState.rotation;
+  }
+
+  cropState.activeIndex = idx;
+  const item = cropState.images[idx];
+
+  if (!item.dataUrl) {
+    const res = await window.electronAPI.readFileAsDataUrl(item.path);
+    if (!res.success) { showToast(`Cannot read image: ${res.error}`, 5000); return; }
+    item.dataUrl = res.dataUrl;
+    renderCropImageList();
+  }
 
   const img = new Image();
   img.onload = () => {
-    cropState.imagePath = filePath;
-    cropState.image     = img;
+    cropState.image = img;
 
     const workArea = document.getElementById('cropWorkArea');
     const maxW = workArea.clientWidth  - 40;
     const maxH = workArea.clientHeight - 40;
-
     cropState.scale = Math.min(maxW / img.naturalWidth, maxH / img.naturalHeight, 1);
 
     const dispW = Math.round(img.naturalWidth  * cropState.scale);
@@ -1126,39 +1331,59 @@ async function loadCropImage(filePath) {
     canvas.style.display = 'block';
     document.getElementById('cropEmptyState').style.display = 'none';
 
-    // Centre frame initially, clamped to image
-    const framePxDisp = Math.round(CROP_FRAME_PX * cropState.scale);
-    cropState.frameX = Math.max(0, Math.round((dispW - framePxDisp) / 2));
-    cropState.frameY = Math.max(0, Math.round((dispH - framePxDisp) / 2));
+    const framePxDisp = Math.round(cropFramePx * cropState.scale);
+    if (item.frameX !== null) {
+      cropState.frameX = Math.max(0, Math.min(item.frameX, dispW - framePxDisp));
+      cropState.frameY = Math.max(0, Math.min(item.frameY, dispH - framePxDisp));
+    } else {
+      cropState.frameX = Math.max(0, Math.round((dispW - framePxDisp) / 2));
+      cropState.frameY = Math.max(0, Math.round((dispH - framePxDisp) / 2));
+    }
 
-    const name = filePath.split('/').pop();
-    document.getElementById('cropFileName').textContent   = name;
-    document.getElementById('cropDimensions').textContent = `${img.naturalWidth} × ${img.naturalHeight} px`;
+    const rot = item.rotation ?? 0;
+    cropState.rotation = rot;
+    document.getElementById('cropRotationSlider').value = rot;
+    document.getElementById('cropRotationInput').value  = rot;
+
+    const name = item.path.split('/').pop();
+    document.getElementById('cropFileName').textContent    = name;
+    document.getElementById('cropDimensions').textContent  = `${img.naturalWidth} × ${img.naturalHeight} px`;
     document.getElementById('cropSummarySize').textContent = `${img.naturalWidth} × ${img.naturalHeight} px`;
-    document.getElementById('cropFileInfoGroup').style.display  = '';
-    document.getElementById('cropPositionGroup').style.display  = '';
-    document.getElementById('cropSummaryBox').style.display     = '';
-    document.getElementById('cropDownloadBtn').disabled = false;
+    ['cropFileInfoGroup','cropPositionGroup','cropRotationGroup','cropSummaryBox'].forEach(id => {
+      document.getElementById(id).style.display = '';
+    });
+    document.getElementById('cropSaveBtn').disabled = false;
+    document.getElementById('cropSaveAsIsBtn').disabled = false;
 
     drawCropCanvas();
-    log('Crop', `Loaded: ${img.naturalWidth}×${img.naturalHeight}px | scale: ${cropState.scale.toFixed(3)}`);
+    renderCropImageList();
+    log('Crop', `Active: ${name} | ${img.naturalWidth}×${img.naturalHeight}px`);
   };
-  img.src = res.dataUrl;
+  img.src = item.dataUrl;
 }
 
 function drawCropCanvas() {
   const canvas = document.getElementById('cropCanvas');
   if (!canvas || !cropState.image) return;
-  const ctx  = canvas.getContext('2d');
-  const { image, scale, frameX, frameY } = cropState;
-  const dispW = canvas.width;
-  const dispH = canvas.height;
-  const fs    = Math.round(CROP_FRAME_PX * scale); // frame size in display px
+  const ctx = canvas.getContext('2d');
+  const { image, scale, frameX, frameY, rotation } = cropState;
+  const dispW = canvas.width, dispH = canvas.height;
+  const fs = Math.round(cropFramePx * scale);
 
   ctx.clearRect(0, 0, dispW, dispH);
-  ctx.drawImage(image, 0, 0, dispW, dispH);
 
-  // Darken outside the frame
+  // Dark background visible when rotation exposes canvas edges
+  ctx.fillStyle = '#111';
+  ctx.fillRect(0, 0, dispW, dispH);
+
+  // Draw image rotated around its centre
+  ctx.save();
+  ctx.translate(dispW / 2, dispH / 2);
+  ctx.rotate(rotation * Math.PI / 180);
+  ctx.drawImage(image, -dispW / 2, -dispH / 2, dispW, dispH);
+  ctx.restore();
+
+  // Dim outside frame
   ctx.fillStyle = 'rgba(0,0,0,0.55)';
   ctx.fillRect(0, 0, dispW, frameY);
   ctx.fillRect(0, frameY + fs, dispW, dispH - frameY - fs);
@@ -1167,11 +1392,11 @@ function drawCropCanvas() {
 
   // Frame border
   ctx.strokeStyle = '#ffffff';
-  ctx.lineWidth = 2;
+  ctx.lineWidth   = 2;
   ctx.setLineDash([]);
   ctx.strokeRect(frameX + 1, frameY + 1, fs - 2, fs - 2);
 
-  // Rule-of-thirds grid inside frame
+  // Rule-of-thirds
   ctx.strokeStyle = 'rgba(255,255,255,0.35)';
   ctx.lineWidth   = 1;
   ctx.setLineDash([4, 4]);
@@ -1188,13 +1413,11 @@ function drawCropCanvas() {
   // Corner handles
   const h = 7;
   ctx.fillStyle = '#ffffff';
-  [[frameX, frameY], [frameX + fs, frameY], [frameX, frameY + fs], [frameX + fs, frameY + fs]].forEach(([x, y]) => {
-    ctx.fillRect(x - h / 2, y - h / 2, h, h);
+  [[frameX, frameY], [frameX+fs, frameY], [frameX, frameY+fs], [frameX+fs, frameY+fs]].forEach(([x, y]) => {
+    ctx.fillRect(x - h/2, y - h/2, h, h);
   });
 
-  // Position readout
-  const ax = Math.round(frameX / scale);
-  const ay = Math.round(frameY / scale);
+  const ax = Math.round(frameX / scale), ay = Math.round(frameY / scale);
   document.getElementById('cropPosDisplay').textContent = `X: ${ax.toLocaleString()}  Y: ${ay.toLocaleString()}`;
 }
 
@@ -1203,9 +1426,9 @@ function onCropMouseDown(e) {
   const rect   = canvas.getBoundingClientRect();
   const mx = (e.clientX - rect.left) * (canvas.width  / rect.width);
   const my = (e.clientY - rect.top)  * (canvas.height / rect.height);
-  const fs = Math.round(CROP_FRAME_PX * cropState.scale);
+  const fs = Math.round(cropFramePx * cropState.scale);
   const { frameX, frameY } = cropState;
-  if (mx >= frameX && mx <= frameX + fs && my >= frameY && my <= frameY + fs) {
+  if (mx >= frameX && mx <= frameX+fs && my >= frameY && my <= frameY+fs) {
     cropState.isDragging      = true;
     cropState.dragStartX      = mx;
     cropState.dragStartY      = my;
@@ -1220,19 +1443,15 @@ function onCropMouseMove(e) {
   const rect   = canvas.getBoundingClientRect();
   const mx = (e.clientX - rect.left) * (canvas.width  / rect.width);
   const my = (e.clientY - rect.top)  * (canvas.height / rect.height);
-  const fs = Math.round(CROP_FRAME_PX * cropState.scale);
+  const fs = Math.round(cropFramePx * cropState.scale);
 
   if (!cropState.isDragging) {
     const { frameX, frameY } = cropState;
-    canvas.style.cursor = (mx >= frameX && mx <= frameX + fs && my >= frameY && my <= frameY + fs)
-      ? 'grab' : 'default';
+    canvas.style.cursor = (mx >= frameX && mx <= frameX+fs && my >= frameY && my <= frameY+fs) ? 'grab' : 'default';
     return;
   }
-
-  let nx = cropState.dragStartFrameX + (mx - cropState.dragStartX);
-  let ny = cropState.dragStartFrameY + (my - cropState.dragStartY);
-  cropState.frameX = Math.max(0, Math.min(nx, canvas.width  - fs));
-  cropState.frameY = Math.max(0, Math.min(ny, canvas.height - fs));
+  cropState.frameX = Math.max(0, Math.min(cropState.dragStartFrameX + (mx - cropState.dragStartX), canvas.width  - fs));
+  cropState.frameY = Math.max(0, Math.min(cropState.dragStartFrameY + (my - cropState.dragStartY), canvas.height - fs));
   drawCropCanvas();
 }
 
@@ -1242,36 +1461,85 @@ function onCropMouseUp() {
   document.getElementById('cropCanvas').style.cursor = 'default';
 }
 
-async function performCrop() {
-  const { image, scale, frameX, frameY, imagePath } = cropState;
-  if (!image) return;
+async function saveAsIs() {
+  const { image, activeIndex, images, destination } = cropState;
+  if (!image || activeIndex === null) return;
 
-  const actualX = Math.round(frameX / scale);
-  const actualY = Math.round(frameY / scale);
+  const item     = images[activeIndex];
+  const fileName = item.path.split('/').pop();
 
-  const offscreen = document.createElement('canvas');
-  offscreen.width  = CROP_FRAME_PX;
-  offscreen.height = CROP_FRAME_PX;
-  offscreen.getContext('2d').drawImage(image, actualX, actualY, CROP_FRAME_PX, CROP_FRAME_PX, 0, 0, CROP_FRAME_PX, CROP_FRAME_PX);
-
-  const ext      = imagePath.split('.').pop().toLowerCase();
-  const mime     = (ext === 'jpg' || ext === 'jpeg') ? 'image/jpeg' : 'image/png';
-  const quality  = mime === 'image/jpeg' ? 0.95 : undefined;
-  const dataUrl  = offscreen.toDataURL(mime, quality);
-
-  const fileName   = imagePath.split('/').pop();
-  const dotIdx     = fileName.lastIndexOf('.');
-  const baseName   = dotIdx >= 0 ? fileName.slice(0, dotIdx) : fileName;
-  const extension  = dotIdx >= 0 ? fileName.slice(dotIdx) : '';
-  const outputName = `${baseName}-cropped${extension}`;
-
-  log('Crop', `Saving crop at (${actualX}, ${actualY}) → ${outputName}`);
-
-  const result = await window.electronAPI.saveCroppedImage({ dataUrl, defaultName: outputName });
+  log('Crop', `Save As-Is: ${fileName}`);
+  const result = await window.electronAPI.saveCroppedImage({
+    dataUrl:    item.dataUrl,
+    defaultName: fileName,
+    folderPath: destination || undefined
+  });
 
   if (result.success) {
     logSuccess('Crop', `Saved: ${result.savedPath.split('/').pop()}`);
     showToast(`Saved: ${result.savedPath.split('/').pop()}`);
+  } else if (!result.cancelled) {
+    logError('Crop', `Save failed: ${result.error}`);
+    showToast(`Save failed: ${result.error}`, 6000);
+  }
+}
+
+async function performCrop() {
+  const { image, scale, frameX, frameY, activeIndex, images, rotation } = cropState;
+  if (!image || activeIndex === null) return;
+
+  const item = images[activeIndex];
+  const W    = image.naturalWidth;
+  const H    = image.naturalHeight;
+  const rad  = rotation * Math.PI / 180;
+
+  // Build a full-resolution canvas with the image rotated around its centre.
+  // The bounding box grows when the image is rotated.
+  const cos   = Math.abs(Math.cos(rad));
+  const sin   = Math.abs(Math.sin(rad));
+  const bboxW = Math.ceil(W * cos + H * sin);
+  const bboxH = Math.ceil(W * sin + H * cos);
+
+  const rotCanvas = document.createElement('canvas');
+  rotCanvas.width  = bboxW;
+  rotCanvas.height = bboxH;
+  const rotCtx = rotCanvas.getContext('2d');
+  rotCtx.translate(bboxW / 2, bboxH / 2);
+  rotCtx.rotate(rad);
+  rotCtx.drawImage(image, -W / 2, -H / 2);
+  rotCtx.setTransform(1, 0, 0, 1, 0, 0);
+
+  // Map frame position from display coords to rotated-canvas coords.
+  // Display canvas centre == bboxW/2, bboxH/2 at full resolution.
+  const dispCX  = Math.round(W * scale) / 2;
+  const dispCY  = Math.round(H * scale) / 2;
+  const actualX = Math.round(bboxW / 2 + (frameX - dispCX) / scale);
+  const actualY = Math.round(bboxH / 2 + (frameY - dispCY) / scale);
+
+  const offscreen = document.createElement('canvas');
+  offscreen.width = offscreen.height = cropFramePx;
+  offscreen.getContext('2d').drawImage(rotCanvas, actualX, actualY, cropFramePx, cropFramePx, 0, 0, cropFramePx, cropFramePx);
+
+  const ext      = item.path.split('.').pop().toLowerCase();
+  const mime     = (ext === 'jpg' || ext === 'jpeg') ? 'image/jpeg' : 'image/png';
+  const dataUrl  = offscreen.toDataURL(mime, mime === 'image/jpeg' ? 0.95 : undefined);
+
+  const fileName   = item.path.split('/').pop();
+  const dotIdx     = fileName.lastIndexOf('.');
+  const outputName = dotIdx >= 0
+    ? `${fileName.slice(0, dotIdx)}-cropped${fileName.slice(dotIdx)}`
+    : `${fileName}-cropped`;
+
+  log('Crop', `Saving (${actualX}, ${actualY}) → ${outputName}`);
+  const result = await window.electronAPI.saveCroppedImage({
+    dataUrl, defaultName: outputName, folderPath: cropState.destination || undefined
+  });
+
+  if (result.success) {
+    item.saved = true;
+    logSuccess('Crop', `Saved: ${result.savedPath.split('/').pop()}`);
+    showToast(`Saved: ${result.savedPath.split('/').pop()}`);
+    renderCropImageList();
   } else if (!result.cancelled) {
     logError('Crop', `Save failed: ${result.error}`);
     showToast(`Save failed: ${result.error}`, 6000);

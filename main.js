@@ -299,6 +299,14 @@ ipcMain.handle('generate-mockups', async (event, { apiKey, baseImages, patternIm
       logError('FS', `Cannot create output dir: ${err.message}`);
     }
 
+    try {
+      const patternCopyPath = path.join(outputDir, path.basename(patternPath));
+      fs.copyFileSync(patternPath, patternCopyPath);
+      log('FS', `Pattern copied: ${path.basename(patternPath)}`);
+    } catch (err) {
+      logError('FS', `Cannot copy pattern: ${err.message}`);
+    }
+
     let imageIndex = 1;
 
     for (let bi = 0; bi < baseImages.length; bi++) {
@@ -454,12 +462,12 @@ ipcMain.handle('generate-mockups-kd', async (event, {
   baseImagePairs, patternImages, destination, catalogueName,
   scaleMode, patternRotation, patternTileWidthMm
 }) => {
+  // patternImages is [{ path, tileWidthMm }]; patternTileWidthMm is the global fallback
   const total = baseImagePairs.length * patternImages.length;
 
   log('KD', '─'.repeat(56));
   log('KD', `Batch start — ${baseImagePairs.length} base × ${patternImages.length} patterns = ${total} calls`);
   log('KD', `Catalogue: "${catalogueName}" | Scale: ${scaleMode} | Rotation: ${patternRotation}°`);
-  log('KD', `Tile width: ${patternTileWidthMm} mm | Curtain width: per image`);
   log('KD', `Destination: ${destination}`);
   log('KD', '─'.repeat(56));
 
@@ -468,19 +476,20 @@ ipcMain.handle('generate-mockups-kd', async (event, {
   const batchStart = Date.now();
 
   for (let pi = 0; pi < patternImages.length; pi++) {
-    const patternPath = patternImages[pi];
+    const pattern     = patternImages[pi];
+    const patternPath = pattern.path;
     const patternBaseName = path.basename(patternPath, path.extname(patternPath));
-    const folderName = sanitizeName(catalogueName) + sanitizeName(patternBaseName);
-    const outputDir = path.join(destination, folderName);
+    const folderName  = sanitizeName(catalogueName) + sanitizeName(patternBaseName);
+    const outputDir   = path.join(destination, folderName);
+    const tileWidthMm = parseFloat(pattern.tileWidthMm) || parseFloat(patternTileWidthMm) || 210;
 
-    log('KD', `Pattern ${pi + 1}/${patternImages.length}: "${path.basename(patternPath)}" → /${folderName}`);
+    log('KD', `Pattern ${pi + 1}/${patternImages.length}: "${path.basename(patternPath)}" | tile=${tileWidthMm}mm → /${folderName}`);
 
-    try {
-      fs.mkdirSync(outputDir, { recursive: true });
-      log('FS', `Output dir: ${outputDir}`);
-    } catch (err) {
-      logError('FS', `Cannot create output dir: ${err.message}`);
-    }
+    try { fs.mkdirSync(outputDir, { recursive: true }); }
+    catch (err) { logError('KD', `Cannot create output dir: ${err.message}`); }
+
+    try { fs.copyFileSync(patternPath, path.join(outputDir, path.basename(patternPath))); }
+    catch (err) { logError('KD', `Cannot copy pattern: ${err.message}`); }
 
     let imageIndex = 1;
 
@@ -489,8 +498,6 @@ ipcMain.handle('generate-mockups-kd', async (event, {
       const baseFile    = path.basename(basePath);
       const patternFile = path.basename(patternPath);
       const callNum     = completed + 1;
-
-      log('KD', `[${callNum}/${total}] ${baseFile}${maskPath ? ' (masked)' : ''}${curtainWidthMm ? ` [${curtainWidthMm}mm]` : ''} + ${patternFile}`);
 
       event.sender.send('progress-update', {
         completed,
@@ -502,23 +509,21 @@ ipcMain.handle('generate-mockups-kd', async (event, {
       try {
         const curtainBuf = fs.readFileSync(basePath);
         const patternBuf = fs.readFileSync(patternPath);
-        log('FS', `Read: ${baseFile} (${kb(curtainBuf.length)}) + ${patternFile} (${kb(patternBuf.length)})`);
 
         const body = {
-          curtainBase64:    curtainBuf.toString('base64'),
-          curtainMimeType:  getMimeType(basePath),
-          patternBase64:    patternBuf.toString('base64'),
-          patternMimeType:  getMimeType(patternPath),
-          scaleMode:        scaleMode || 'a4-scan',
-          patternRotation:  parseInt(patternRotation) || 0,
-          patternRealWidthMm: parseFloat(patternTileWidthMm) || 210
+          curtainBase64:      curtainBuf.toString('base64'),
+          curtainMimeType:    getMimeType(basePath),
+          patternBase64:      patternBuf.toString('base64'),
+          patternMimeType:    getMimeType(patternPath),
+          scaleMode:          scaleMode || 'a4-scan',
+          patternRotation:    parseInt(patternRotation) || 0,
+          patternRealWidthMm: tileWidthMm
         };
 
         if (maskPath) {
           const maskBuf = fs.readFileSync(maskPath);
           body.maskBase64   = maskBuf.toString('base64');
           body.maskMimeType = getMimeType(maskPath);
-          log('FS', `Mask: ${path.basename(maskPath)} (${kb(maskBuf.length)})`);
         }
 
         if (curtainWidthMm && parseFloat(curtainWidthMm) > 0) {
@@ -527,20 +532,17 @@ ipcMain.handle('generate-mockups-kd', async (event, {
 
         const data = await postJson(KD_API_URL, body);
 
-        if (!data.imageBase64) {
-          throw new Error('KD API response missing imageBase64 field');
-        }
+        if (!data.imageBase64) throw new Error('KD API response missing imageBase64 field');
 
         const outputBuf  = Buffer.from(data.imageBase64, 'base64');
         const outputPath = path.join(outputDir, `${imageIndex}.png`);
         fs.writeFileSync(outputPath, outputBuf);
 
         completed++;
-        logSuccess('KD', `✓ [${callNum}/${total}] Saved ${imageIndex}.png (${kb(outputBuf.length)}) → ${folderName}`);
+        logSuccess('KD', `✓ [${callNum}/${total}] ${imageIndex}.png → ${folderName}`);
 
         event.sender.send('progress-update', {
-          completed,
-          total,
+          completed, total,
           status:  'success',
           message: `✓ Saved ${imageIndex}.png → ${folderName}`
         });
@@ -548,14 +550,10 @@ ipcMain.handle('generate-mockups-kd', async (event, {
       } catch (err) {
         const friendly = friendlyError(err);
         logError('KD', `✗ [${callNum}/${total}] ${baseFile} + ${patternFile}: ${err.message}`);
-        logError('KD', `  → ${friendly}`);
-
         errors.push({ base: baseFile, pattern: patternFile, error: friendly });
         completed++;
-
         event.sender.send('progress-update', {
-          completed,
-          total,
+          completed, total,
           status:  'error',
           message: `✗ ${baseFile} + ${patternFile}: ${friendly}`
         });
@@ -567,12 +565,13 @@ ipcMain.handle('generate-mockups-kd', async (event, {
 
   const batchMs      = Date.now() - batchStart;
   const successCount = completed - errors.length;
+  const elapsed      = (batchMs / 1000).toFixed(1);
 
   log('KD', '─'.repeat(56));
   if (errors.length === 0) {
-    logSuccess('KD', `Batch done in ${(batchMs / 1000).toFixed(1)}s — ${successCount}/${total} succeeded`);
+    logSuccess('KD', `Done — ${successCount}/${total} mockups in ${elapsed}s`);
   } else {
-    logWarn('KD', `Batch done in ${(batchMs / 1000).toFixed(1)}s — ${successCount}/${total} succeeded, ${errors.length} failed`);
+    logWarn('KD', `Done — ${successCount}/${total} ok, ${errors.length} failed | ${elapsed}s`);
     errors.forEach(e => logError('KD', `  ✗ ${e.base} + ${e.pattern}: ${e.error}`));
   }
   log('KD', '─'.repeat(56));
@@ -694,15 +693,21 @@ ipcMain.handle('read-file-as-data-url', (_event, filePath) => {
   }
 });
 
-ipcMain.handle('save-cropped-image', async (_event, { dataUrl, defaultName }) => {
-  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
-    defaultPath: defaultName,
-    filters: [
-      { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] },
-      { name: 'All Files', extensions: ['*'] }
-    ]
-  });
-  if (canceled || !filePath) return { success: false, cancelled: true };
+ipcMain.handle('save-cropped-image', async (_event, { dataUrl, defaultName, folderPath }) => {
+  let filePath;
+  if (folderPath) {
+    filePath = path.join(folderPath, defaultName);
+  } else {
+    const result = await dialog.showSaveDialog(mainWindow, {
+      defaultPath: defaultName,
+      filters: [
+        { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    });
+    if (result.canceled || !result.filePath) return { success: false, cancelled: true };
+    filePath = result.filePath;
+  }
   try {
     const b64 = dataUrl.replace(/^data:image\/\w+;base64,/, '');
     fs.writeFileSync(filePath, Buffer.from(b64, 'base64'));

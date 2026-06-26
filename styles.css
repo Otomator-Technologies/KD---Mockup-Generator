@@ -708,6 +708,7 @@ select.input option { background: #1c1c1c; color: #f0f0f0; }
 /* ─── KD Base Pair Cards (single column, horizontal) ─── */
 .pair-list {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 10px;
   display: flex;
@@ -730,13 +731,42 @@ select.input option { background: #1c1c1c; color: #f0f0f0; }
 }
 
 /* Base image — left */
+.pair-base-section {
+  width: 160px;
+  height: 160px;
+  flex-shrink: 0;
+  position: relative;
+  overflow: hidden;
+  background: var(--surface-2);
+}
 .pair-thumb {
   width: 160px;
   height: 160px;
   object-fit: cover;
   display: block;
-  flex-shrink: 0;
 }
+.pair-base-remove {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 18px;
+  height: 18px;
+  background: rgba(239, 68, 68, 0.85);
+  border: none;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: background 0.15s;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+}
+.pair-item:hover .pair-base-remove { opacity: 1; }
+.pair-base-remove:hover { background: var(--error); }
 
 /* Mask slot — centre column */
 .pair-mask-section {
@@ -810,6 +840,31 @@ select.input option { background: #1c1c1c; color: #f0f0f0; }
   white-space: nowrap;
 }
 
+/* Pattern card — card is at least 200px tall, thumbnail stays 160×160 */
+#kdPatternList .pair-item {
+  min-height: 200px;
+}
+#kdPatternList .pair-base-section {
+  width: 160px;
+  height: auto;
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#kdPatternList .pair-thumb {
+  width: 160px;
+  height: 160px;
+  flex-shrink: 0;
+}
+
+.kd-pattern-res {
+  font-size: 10px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 2px;
+}
+
 .pair-width {
   display: flex;
   align-items: center;
@@ -849,26 +904,6 @@ select.input option { background: #1c1c1c; color: #f0f0f0; }
   flex-shrink: 0;
 }
 
-.pair-remove {
-  align-self: flex-end;
-  height: 26px;
-  padding: 0 10px;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text-3);
-  font-size: 11px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-}
-
-.pair-remove:hover {
-  background: rgba(239, 68, 68, 0.12);
-  color: var(--error);
-  border-color: rgba(239, 68, 68, 0.3);
-}
 
 /* ─── SP Pattern Card Grid ─── */
 .sp-source-list {
@@ -996,6 +1031,112 @@ select.input option { background: #1c1c1c; color: #f0f0f0; }
 .tag-sp { background: rgba(236, 72, 153, 0.15); color: #ec4899; }
 
 /* ─── Crop Pattern Page ─── */
+
+/* Narrow image-list panel on the left */
+.crop-list-panel {
+  width: 210px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.crop-list-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.crop-remove-all-btn {
+  color: var(--error);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+.crop-remove-all-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.5);
+}
+.crop-remove-all-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.crop-image-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.crop-list-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px;
+  cursor: pointer;
+  min-width: 0;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.crop-list-item:hover  { border-color: var(--border-2); }
+.crop-list-item.active { border-color: var(--accent); background: var(--accent-light); }
+
+.crop-list-thumb {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 3px;
+  flex-shrink: 0;
+  display: block;
+}
+
+.crop-list-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.crop-list-name {
+  font-size: 10px;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crop-list-status {
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+.crop-list-status--done    { color: var(--success); }
+.crop-list-status--editing { color: var(--accent); }
+
+.crop-list-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 16px;
+  height: 16px;
+  background: rgba(0, 0, 0, 0.7);
+  border: none;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 11px;
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: background 0.15s;
+}
+
+.crop-list-item:hover .crop-list-remove { display: flex; }
+.crop-list-remove:hover { background: var(--error); }
+
 .crop-canvas-panel {
   flex: 1;
   display: flex;
@@ -1077,4 +1218,44 @@ select.input option { background: #1c1c1c; color: #f0f0f0; }
   border-radius: 4px;
   padding: 6px 10px;
   margin-bottom: 6px;
+}
+
+.crop-rotation-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.crop-rotation-slider {
+  flex: 1;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.crop-rotation-number {
+  width: 58px;
+  height: 28px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-2);
+  padding: 0 4px;
+  font-size: 11px;
+  font-family: inherit;
+  outline: none;
+  text-align: center;
+  -moz-appearance: textfield;
+}
+.crop-rotation-number:focus { border-color: var(--accent); }
+.crop-rotation-number::-webkit-inner-spin-button,
+.crop-rotation-number::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.crop-rotation-unit {
+  font-size: 11px;
+  color: var(--text-3);
+  user-select: none;
+}
+
+.crop-save-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }

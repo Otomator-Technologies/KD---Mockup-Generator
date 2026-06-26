@@ -196,9 +196,9 @@
           </div>
 
           <div class="form-group">
-            <label class="form-label">Pattern Tile Width <span class="optional-tag">mm</span></label>
+            <label class="form-label">Default Tile Width <span class="optional-tag">mm</span></label>
             <input type="number" id="kdPatternTileWidthMm" placeholder="210" class="input" min="1" step="0.1" value="210">
-            <p class="form-hint">Physical width of one pattern tile (A4 = 210 mm)</p>
+            <p class="form-hint">Pre-fills tile width for newly added patterns (A4 = 210 mm)</p>
           </div>
 
           <div class="summary-box">
@@ -238,7 +238,7 @@
               Add Patterns
             </button>
           </div>
-          <div class="image-grid" id="kdPatternImageGrid">
+          <div class="pair-list" id="kdPatternList">
             <div class="empty-state">
               <div class="empty-icon">
                 <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="4" y="4" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="22" y="4" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="4" y="22" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="22" y="22" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/></svg>
@@ -323,46 +323,72 @@
     <div id="flowCrop" class="flow">
       <main class="main">
 
-        <!-- Crop canvas panel -->
+        <!-- Panel 1: Image list -->
+        <section class="panel crop-list-panel">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h2 class="panel-title">Images</h2>
+              <span class="count-badge" id="cropImageCount">0</span>
+            </div>
+            <div class="crop-list-actions">
+              <button class="btn btn-add" id="cropAddImagesBtn">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                Add
+              </button>
+              <button class="btn btn-sm crop-remove-all-btn" id="cropRemoveAllBtn" disabled title="Remove all images">Remove All</button>
+            </div>
+          </div>
+          <div class="crop-image-list" id="cropImageList">
+            <div class="empty-state">
+              <p class="empty-label">No images</p>
+              <p class="empty-hint">Add images to begin cropping</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- Panel 2: Crop canvas -->
         <section class="panel crop-canvas-panel">
           <div class="panel-header">
             <div class="panel-title-group">
               <h2 class="panel-title">Crop Canvas</h2>
-              <span class="count-badge">2400 × 2400 px</span>
+              <span class="count-badge" id="cropFrameBadge">2400 × 2400 px</span>
             </div>
-            <button class="btn btn-add" id="cropSelectBtn">
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-              Select Image
-            </button>
           </div>
-
-          <!-- Drop zone / work area -->
           <div class="crop-work-area" id="cropWorkArea">
             <div class="empty-state" id="cropEmptyState">
               <div class="empty-icon">
                 <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="4" y="8" width="32" height="24" rx="3" stroke="currentColor" stroke-width="1.5"/><path d="M12 18l6 6 4-4 8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="14" cy="16" r="2" stroke="currentColor" stroke-width="1.5"/><rect x="14" y="22" width="12" height="8" rx="1" stroke="currentColor" stroke-width="1.3" stroke-dasharray="2 2"/></svg>
               </div>
               <p class="empty-label">No image selected</p>
-              <p class="empty-hint">Select an image or drag & drop it here — a 2400 × 2400 px frame will appear for positioning</p>
+              <p class="empty-hint">Add images on the left, then click one to open it in the crop canvas</p>
             </div>
             <canvas id="cropCanvas" style="display:none"></canvas>
           </div>
         </section>
 
-        <!-- Settings panel -->
+        <!-- Panel 3: Settings -->
         <section class="panel panel-settings">
           <h2 class="panel-title" style="margin-bottom: 20px;">Crop Settings</h2>
 
           <div class="form-group">
-            <label class="form-label">Crop Frame</label>
-            <div class="crop-spec-box">
-              <span class="crop-spec-value">2400 × 2400</span>
-              <span class="crop-spec-unit">px · square</span>
+            <label class="form-label">Destination Folder</label>
+            <div class="folder-row">
+              <input type="text" id="cropDestinationPath" placeholder="No folder selected" class="input input-readonly" readonly>
+              <button class="btn btn-sm" id="cropSelectDestination">Browse</button>
             </div>
           </div>
 
+          <div class="form-group">
+            <label class="form-label">Frame Size</label>
+            <select class="input" id="cropFrameSize">
+              <option value="2400">2400 × 2400 px</option>
+              <option value="1800">1800 × 1800 px</option>
+              <option value="1200">1200 × 1200 px</option>
+            </select>
+          </div>
+
           <div class="form-group" id="cropFileInfoGroup" style="display:none">
-            <label class="form-label">Source Image</label>
+            <label class="form-label">Active Image</label>
             <div class="crop-file-name" id="cropFileName">—</div>
             <div class="crop-dimensions" id="cropDimensions">—</div>
           </div>
@@ -373,6 +399,17 @@
             <p class="form-hint">Drag the white frame on the canvas to reposition it</p>
           </div>
 
+          <div class="form-group" id="cropRotationGroup" style="display:none">
+            <label class="form-label">Rotation</label>
+            <div class="crop-rotation-row">
+              <input type="range" id="cropRotationSlider" min="-180" max="180" step="0.5" value="0" class="crop-rotation-slider">
+              <input type="number" id="cropRotationInput" min="-180" max="180" step="0.5" value="0" class="crop-rotation-number">
+              <span class="crop-rotation-unit">°</span>
+              <button class="btn btn-sm" id="cropRotationReset" title="Reset rotation">↺</button>
+            </div>
+            <p class="form-hint">Correct scan angle (−180° to +180°)</p>
+          </div>
+
           <div class="summary-box" id="cropSummaryBox" style="display:none">
             <div class="summary-row">
               <span class="summary-label">Image size</span>
@@ -380,14 +417,15 @@
             </div>
             <div class="summary-divider"></div>
             <div class="summary-row">
-              <span class="summary-label">Output size</span>
-              <span class="summary-value">2400 × 2400 px</span>
+              <span class="summary-label">Output</span>
+              <span class="summary-value" id="cropOutputSize">2400 × 2400 px</span>
             </div>
           </div>
 
-          <button class="btn btn-run" id="cropDownloadBtn" disabled>
-            Crop &amp; Save
-          </button>
+          <div class="crop-save-buttons">
+            <button class="btn btn-run" id="cropSaveBtn" disabled>Crop &amp; Save</button>
+            <button class="btn btn-run btn-secondary" id="cropSaveAsIsBtn" disabled>Save As-Is</button>
+          </div>
         </section>
 
       </main>
