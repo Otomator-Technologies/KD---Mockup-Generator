@@ -9,10 +9,12 @@ const state = {
 
 const kdState = {
   baseImagePairs: [], // [{ base: string, mask: string|null, curtainWidthMm: string }]
-  patternImages:  [],
+  patternImages:  [], // [{ path, tileWidthMm, resolution, status, error }]
   destination:    null,
   isRunning:      false
 };
+
+let kdBatchAborted = false;
 
 const spState = {
   sourceImages: [],
@@ -191,7 +193,7 @@ async function init() {
     kdState.baseImagePairs = savedPairs;
     renderKdPairList();
     updateKdSummary();
-    updateKdRunButton();
+    updateKdRunButtons();
     log('UI', `Restored ${savedPairs.length} KD base image pair(s)`);
   }
 
@@ -297,14 +299,14 @@ function bindEvents() {
     let dupes = 0;
     paths.forEach(p => {
       if (existing.has(p)) { dupes++; return; }
-      kdState.baseImagePairs.push({ base: p, mask: null, curtainWidthMm: '' });
+      kdState.baseImagePairs.push({ base: p, mask: null, curtainWidthMm: '', selected: true });
     });
     const added = paths.length - dupes;
 
     log('KD', `Base images: +${added} added${dupes ? `, ${dupes} duplicate(s) skipped` : ''} → total ${kdState.baseImagePairs.length}`);
     renderKdPairList();
     updateKdSummary();
-    updateKdRunButton();
+    updateKdRunButtons();
     saveKdBasePairs();
   });
 
@@ -318,7 +320,7 @@ function bindEvents() {
     let dupes = 0;
     paths.forEach(p => {
       if (existing.has(p)) { dupes++; return; }
-      const item = { path: p, tileWidthMm: defaultWidth, resolution: null };
+      const item = { path: p, tileWidthMm: defaultWidth, resolution: null, status: 'idle', error: null };
       kdState.patternImages.push(item);
       const img = new Image();
       img.onload = () => { item.resolution = { w: img.naturalWidth, h: img.naturalHeight }; renderKdPatternGrid(); };
@@ -329,7 +331,7 @@ function bindEvents() {
     renderKdPatternGrid();
     updateCount('kdPatternCount', kdState.patternImages.length);
     updateKdSummary();
-    updateKdRunButton();
+    updateKdRunButtons();
   });
 
   // ── KD: Destination ──
@@ -340,11 +342,11 @@ function bindEvents() {
     kdState.destination = dir;
     document.getElementById('kdDestinationPath').value = dir;
     logSuccess('KD', `Destination set: ${dir}`);
-    updateKdRunButton();
+    updateKdRunButtons();
   });
 
   // ── KD: Catalogue name ──
-  document.getElementById('kdCatalogueName').addEventListener('input', () => updateKdRunButton());
+  document.getElementById('kdCatalogueName').addEventListener('input', () => updateKdRunButtons());
 
   // ── KD: Config autosave ──
   ['kdScaleMode', 'kdPatternRotation'].forEach(id => {
@@ -352,8 +354,19 @@ function bindEvents() {
   });
   document.getElementById('kdPatternTileWidthMm').addEventListener('input', saveKdConfig);
 
-  // ── KD: Run button ──
-  document.getElementById('kdRunBtn').addEventListener('click', runKdGeneration);
+  // ── KD: Apply default tile width to all patterns ──
+  document.getElementById('kdApplyDefaultTileWidth').addEventListener('click', () => {
+    const val = document.getElementById('kdPatternTileWidthMm').value;
+    if (!val || !kdState.patternImages.length) return;
+    kdState.patternImages.forEach(p => { p.tileWidthMm = val; });
+    renderKdPatternGrid();
+    log('KD', `Set tile width ${val}mm on all ${kdState.patternImages.length} pattern(s)`);
+  });
+
+  // ── KD: Run buttons ──
+  document.getElementById('kdRunPendingBtn').addEventListener('click', runKdPending);
+  document.getElementById('kdRunAllBtn').addEventListener('click', runKdAll);
+  document.getElementById('kdStopBtn').addEventListener('click', stopKdBatch);
 
   // ── Seamless Patterns: source images ──
   document.getElementById('spAddSourceImages').addEventListener('click', async () => {
@@ -493,11 +506,30 @@ function renderKdPatternGrid() {
     return;
   }
 
+  const statusLabels = { idle: '○ Pending', running: '⟳ Generating…', done: '✓ Done', error: '✗ Error' };
   const dis = kdState.isRunning ? 'disabled' : '';
+
   container.innerHTML = kdState.patternImages.map((item, i) => {
     const name    = item.path.split('/').pop();
     const fileUrl = encodeURI('file://' + item.path);
     const resText = item.resolution ? `${item.resolution.w} × ${item.resolution.h} px` : '—';
+    const st      = item.status || 'idle';
+    const statusLabel = statusLabels[st] || '○ Pending';
+
+    let actionBtn;
+    if (st === 'running') {
+      actionBtn = `<button class="btn btn-sm kd-card-action kd-card-stop" data-index="${i}">■ Stop</button>`;
+    } else if (st === 'idle') {
+      actionBtn = `<button class="btn btn-sm kd-card-action kd-card-gen" data-index="${i}" ${dis}>▶ Generate</button>`;
+    } else {
+      const label = st === 'error' ? '↺ Retry' : '↺ Regen';
+      actionBtn = `<button class="btn btn-sm kd-card-action kd-card-regen" data-index="${i}" ${dis}>${label}</button>`;
+    }
+
+    const errorRow = (st === 'error' && item.error)
+      ? `<div class="kd-pattern-error" title="${escapeHtml(item.error)}">${escapeHtml(item.error.slice(0, 80))}${item.error.length > 80 ? '…' : ''}</div>`
+      : '';
+
     return `<div class="pair-item" data-index="${i}">
       <div class="pair-base-section">
         <img src="${fileUrl}" alt="${escapeHtml(name)}" class="pair-thumb" draggable="false">
@@ -510,8 +542,13 @@ function renderKdPatternGrid() {
           <span class="pair-width-label">Tile:</span>
           <input type="number" class="pair-width-input kd-pattern-tile-input" data-index="${i}"
             placeholder="210" min="1" step="0.1"
-            value="${escapeHtml(item.tileWidthMm || '')}" ${dis}>
+            value="${escapeHtml(item.tileWidthMm || '')}">
           <span class="pair-width-unit">mm</span>
+        </div>
+        ${errorRow}
+        <div class="kd-card-bottom">
+          <span class="kd-card-status kd-card-status--${st}">${statusLabel}</span>
+          ${actionBtn}
         </div>
       </div>
     </div>`;
@@ -531,7 +568,32 @@ function renderKdPatternGrid() {
       log('KD', `Removed pattern: ${removed.path.split('/').pop()} → total ${kdState.patternImages.length}`);
       renderKdPatternGrid();
       updateKdSummary();
-      updateKdRunButton();
+      updateKdRunButtons();
+    });
+  });
+
+  container.querySelectorAll('.kd-card-gen').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const idx = parseInt(e.currentTarget.dataset.index);
+      generateKdPattern(idx);
+    });
+  });
+
+  container.querySelectorAll('.kd-card-stop').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const idx = parseInt(e.currentTarget.dataset.index);
+      stopKdPattern(idx);
+    });
+  });
+
+  container.querySelectorAll('.kd-card-regen').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const idx = parseInt(e.currentTarget.dataset.index);
+      const item = kdState.patternImages[idx];
+      item.status = 'idle';
+      item.error  = null;
+      renderKdPatternGrid();
+      generateKdPattern(idx);
     });
   });
 }
@@ -561,9 +623,11 @@ function renderKdPairList() {
          <button class="pair-mask-remove" data-index="${i}" title="Remove mask">×</button>`
       : `<button class="pair-add-mask btn btn-sm" data-index="${i}">+ Mask</button>`;
 
-    return `<div class="pair-item" data-index="${i}">
+    const isSelected = pair.selected !== false;
+    return `<div class="pair-item${isSelected ? '' : ' pair-item--deselected'}" data-index="${i}">
       <div class="pair-base-section">
         <img src="${baseUrl}" alt="${escapeHtml(baseName)}" class="pair-thumb" draggable="false">
+        <input type="checkbox" class="pair-base-select" data-index="${i}" ${isSelected ? 'checked' : ''} title="Include in generation">
         <button class="pair-base-remove" data-index="${i}" title="Remove">×</button>
       </div>
       <div class="pair-mask-section">${maskSlot}</div>
@@ -582,6 +646,20 @@ function renderKdPairList() {
   }).join('');
 
   updateCount('kdBaseCount', kdState.baseImagePairs.length);
+
+  // Select / deselect base image
+  container.querySelectorAll('.pair-base-select').forEach(chk => {
+    chk.addEventListener('change', (e) => {
+      const idx = parseInt(e.currentTarget.dataset.index);
+      kdState.baseImagePairs[idx].selected = e.currentTarget.checked;
+      const name = kdState.baseImagePairs[idx].base.split('/').pop();
+      log('KD', `Base image ${e.currentTarget.checked ? 'selected' : 'deselected'}: ${name}`);
+      e.currentTarget.closest('.pair-item').classList.toggle('pair-item--deselected', !e.currentTarget.checked);
+      updateKdSummary();
+      updateKdRunButtons();
+      saveKdBasePairs();
+    });
+  });
 
   // Curtain width per pair
   container.querySelectorAll('.pair-width-input').forEach(input => {
@@ -629,7 +707,7 @@ function renderKdPairList() {
       log('KD', `Removed base: ${removed.base.split('/').pop()} → total ${kdState.baseImagePairs.length}`);
       renderKdPairList();
       updateKdSummary();
-      updateKdRunButton();
+      updateKdRunButtons();
       saveKdBasePairs();
     });
   });
@@ -683,8 +761,9 @@ function setRunning(running) {
 // ─── UI State: KD ────────────────────────────────────────────────────────────
 
 function updateKdSummary() {
-  const b = kdState.baseImagePairs.length;
-  const m = kdState.baseImagePairs.filter(p => p.mask).length;
+  const selected = kdState.baseImagePairs.filter(p => p.selected !== false);
+  const b = selected.length;
+  const m = selected.filter(p => p.mask).length;
   const p = kdState.patternImages.length;
   document.getElementById('kdSummaryBase').textContent    = b;
   document.getElementById('kdSummaryMasks').textContent   = m;
@@ -692,41 +771,30 @@ function updateKdSummary() {
   document.getElementById('kdSummaryTotal').textContent   = b * p;
 }
 
-function updateKdRunButton() {
+function updateKdRunButtons() {
+  if (kdState.isRunning) return;
   const catalogueName = document.getElementById('kdCatalogueName').value.trim();
-  const ready = (
-    !kdState.isRunning &&
+  const baseReady = (
     catalogueName.length > 0 &&
-    kdState.baseImagePairs.length > 0 &&
+    kdState.baseImagePairs.some(p => p.selected !== false) &&
     kdState.patternImages.length > 0 &&
     kdState.destination !== null
   );
-  const btn  = document.getElementById('kdRunBtn');
-  const prev = btn.disabled;
-  btn.disabled = !ready;
-  if (prev !== btn.disabled) {
-    log('KD', ready
-      ? `Run button enabled — ${kdState.baseImagePairs.length} base × ${kdState.patternImages.length} patterns = ${kdState.baseImagePairs.length * kdState.patternImages.length} renders`
-      : 'Run button disabled'
-    );
-  }
+  const hasPending = kdState.patternImages.some(p => p.status === 'idle');
+  document.getElementById('kdRunPendingBtn').disabled = !baseReady || !hasPending;
+  document.getElementById('kdRunAllBtn').disabled     = !baseReady;
 }
 
 function setKdRunning(running) {
   kdState.isRunning = running;
-  document.getElementById('kdRunBtn').disabled = running;
-  document.getElementById('kdRunBtnText').textContent = running ? 'Generating…' : 'Generate Mockups';
+  document.getElementById('kdRunButtons').style.display = running ? 'none' : '';
+  document.getElementById('kdStopBtn').style.display    = running ? ''     : 'none';
   ['kdAddBaseImages', 'kdAddPatternImages', 'kdSelectDestination'].forEach(id => {
     document.getElementById(id).disabled = running;
   });
   document.getElementById('kdCatalogueName').disabled   = running;
   document.getElementById('kdScaleMode').disabled       = running;
   document.getElementById('kdPatternRotation').disabled = running;
-  // Disable per-pattern card controls during generation
-  document.querySelectorAll('.kd-pattern-tile-input, .kd-pattern-remove').forEach(el => {
-    el.disabled = running;
-  });
-  // Re-render to apply disabled state to newly rendered cards
   renderKdPairList();
   renderKdPatternGrid();
 }
@@ -820,72 +888,144 @@ async function runGeneration() {
   updateRunButton();
 }
 
-// ─── Generation: KD Mockup Generator ────────────────────────────────────────
+// ─── Generation: KD Mockup Generator ─────────────────────────────────────────
 
-async function runKdGeneration() {
+async function generateKdPattern(idx) {
+  const item = kdState.patternImages[idx];
+  if (!item || item.status === 'running') return;
+
   const catalogueName      = document.getElementById('kdCatalogueName').value.trim();
   const scaleMode          = document.getElementById('kdScaleMode').value;
   const patternRotation    = document.getElementById('kdPatternRotation').value;
   const patternTileWidthMm = document.getElementById('kdPatternTileWidthMm').value || '210';
 
-  if (!catalogueName) { logWarn('KD', 'Blocked — no catalogue name'); showToast('Please enter a catalogue name'); return; }
-  if (!kdState.destination) { logWarn('KD', 'Blocked — no destination'); showToast('Please select a destination folder'); return; }
+  if (!catalogueName) { showToast('Please enter a catalogue name'); return; }
+  if (!kdState.destination) { showToast('Please select a destination folder'); return; }
 
-  const total = kdState.baseImagePairs.length * kdState.patternImages.length;
+  const selectedPairs = kdState.baseImagePairs.filter(p => p.selected !== false);
+  if (!selectedPairs.length) { showToast('No base images selected'); return; }
 
-  log('KD', '─'.repeat(44));
-  log('KD', `Starting: ${kdState.baseImagePairs.length} base × ${kdState.patternImages.length} patterns = ${total} renders`);
-  log('KD', `Catalogue: "${catalogueName}" | Scale: ${scaleMode} | Rotation: ${patternRotation}°`);
-  log('KD', `Tile: ${patternTileWidthMm} mm`);
-  log('KD', '─'.repeat(44));
+  item.status = 'running';
+  item.error  = null;
+  renderKdPatternGrid();
 
-  setKdRunning(true);
   window.electronAPI.removeProgressListeners();
+  const total = selectedPairs.length;
   setProgress(0, `Starting ${total} render${total !== 1 ? 's' : ''}…`, 'running', `0 / ${total}`);
-
   window.electronAPI.onProgressUpdate(({ completed, total: t, status, message }) => {
     const pct = Math.round((completed / t) * 100);
     setProgress(pct, message, status, `${completed} / ${t}`);
   });
 
+  const result = await window.electronAPI.generateKdPatternSingle({
+    pattern:         { path: item.path, tileWidthMm: item.tileWidthMm },
+    baseImagePairs:  selectedPairs,
+    destination:     kdState.destination,
+    catalogueName,
+    scaleMode,
+    patternRotation,
+    patternTileWidthMm
+  });
+
+  // Discard if user stopped this card while in-flight
+  if (kdState.patternImages[idx]?.status !== 'running') return;
+
+  item.status = result.success ? 'done' : 'error';
+  item.error  = result.success ? null : (result.errors?.[0]?.error || 'Unknown error');
+
+  if (result.success) { logSuccess('KD', `✓ ${item.path.split('/').pop()}`); }
+  else                { logError('KD', `✗ ${item.path.split('/').pop()}: ${item.error}`); }
+
+  renderKdPatternGrid();
+  updateKdRunButtons();
+}
+
+function stopKdPattern(idx) {
+  const item = kdState.patternImages[idx];
+  if (item?.status === 'running') {
+    log('KD', `Stopped: ${item.path.split('/').pop()}`);
+    item.status = 'idle';
+    renderKdPatternGrid();
+  }
+}
+
+function stopKdBatch() {
+  kdBatchAborted = true;
+  kdState.patternImages.forEach((_, i) => stopKdPattern(i));
+  setKdRunning(false);
+  updateKdRunButtons();
+  log('KD', 'Batch stopped by user');
+  setProgress(0, 'Stopped', 'error', '');
+}
+
+async function runKdBatch(indices) {
+  const catalogueName = document.getElementById('kdCatalogueName').value.trim();
+
+  if (!catalogueName) { showToast('Please enter a catalogue name'); return; }
+  if (!kdState.destination) { showToast('Please select a destination folder'); return; }
+  const selectedPairsCount = kdState.baseImagePairs.filter(p => p.selected !== false).length;
+  if (!selectedPairsCount) { showToast('No base images selected'); return; }
+  if (!indices.length) { showToast('No patterns to process'); return; }
+
+  kdBatchAborted = false;
+  setKdRunning(true);
+
+  const total = indices.length;
+  log('KD', '─'.repeat(48));
+  log('KD', `Batch: ${total} pattern${total !== 1 ? 's' : ''} × ${selectedPairsCount} base — "${catalogueName}"`);
+  log('KD', '─'.repeat(48));
+
+  if (consoleCollapsed) {
+    consoleCollapsed = false;
+    document.getElementById('consolePanel').classList.remove('is-collapsed');
+    document.getElementById('consoleChevron').style.transform = 'rotate(0deg)';
+  }
+
   const startTime = Date.now();
+  let doneCount = 0, errCount = 0;
 
-  try {
-    const result = await window.electronAPI.generateMockupsKd({
-      baseImagePairs:    kdState.baseImagePairs,
-      patternImages:     kdState.patternImages.map(p => ({ path: p.path, tileWidthMm: p.tileWidthMm })),
-      destination:       kdState.destination,
-      catalogueName,
-      scaleMode,
-      patternRotation,
-      patternTileWidthMm // global fallback if per-pattern is blank
-    });
+  for (let i = 0; i < indices.length; i++) {
+    if (kdBatchAborted) break;
+    const idx  = indices[i];
+    const name = kdState.patternImages[idx]?.path.split('/').pop() || '';
+    setProgress(Math.round(i / total * 100), `Pattern ${i + 1}/${total}: ${name}`, 'running', `${i} / ${total}`);
+    await generateKdPattern(idx);
+    const st = kdState.patternImages[idx]?.status;
+    if (st === 'done')  doneCount++;
+    else if (st === 'error') errCount++;
+  }
 
-    const elapsed      = ((Date.now() - startTime) / 1000).toFixed(1);
-    const { completed, total: t, errors } = result;
-    const successCount = completed - errors.length;
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
-    if (errors.length === 0) {
-      logSuccess('KD', `Done in ${elapsed}s — ${successCount}/${t} mockups generated`);
-      setProgress(100, `All ${t} mockups generated successfully`, 'success', `${t} / ${t}`);
-      showToast(`Done! ${successCount} mockup${successCount !== 1 ? 's' : ''} saved`);
+  if (!kdBatchAborted) {
+    if (errCount === 0) {
+      logSuccess('KD', `Done in ${elapsed}s — ${doneCount}/${total} pattern${total !== 1 ? 's' : ''} generated`);
+      setProgress(100, `All ${doneCount} pattern${doneCount !== 1 ? 's' : ''} generated`, 'success', `${doneCount} / ${total}`);
+      showToast(`Done! ${doneCount} pattern${doneCount !== 1 ? 's' : ''} saved`);
     } else {
-      logWarn('KD', `Done in ${elapsed}s — ${successCount}/${t} ok, ${errors.length} failed`);
-      errors.forEach(e => logError('KD', `  ✗ ${e.base} + ${e.pattern}: ${e.error}`));
-      setProgress(100, `Completed with ${errors.length} error${errors.length !== 1 ? 's' : ''}`, 'error', `${t} / ${t}`);
-      showToast(`Done: ${successCount} generated, ${errors.length} failed`, 6000);
+      logWarn('KD', `Done in ${elapsed}s — ${doneCount} ok, ${errCount} failed`);
+      setProgress(100, `Completed with ${errCount} error${errCount !== 1 ? 's' : ''}`, 'error', `${doneCount + errCount} / ${total}`);
+      showToast(`Done: ${doneCount} generated, ${errCount} failed`, 6000);
     }
-
-  } catch (err) {
-    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    logError('KD', `IPC failure after ${elapsed}s: ${err.message}`);
-    setProgress(0, `Failed: ${err.message}`, 'error', '');
-    showToast(`Error: ${err.message}`, 7000);
-    console.error(err);
   }
 
   setKdRunning(false);
-  updateKdRunButton();
+  updateKdRunButtons();
+}
+
+async function runKdPending() {
+  const pendingIndices = kdState.patternImages
+    .map((p, i) => ({ p, i }))
+    .filter(({ p }) => p.status === 'idle')
+    .map(({ i }) => i);
+  if (!pendingIndices.length) { showToast('No pending patterns'); return; }
+  await runKdBatch(pendingIndices);
+}
+
+async function runKdAll() {
+  kdState.patternImages.forEach(p => { p.status = 'idle'; p.error = null; });
+  renderKdPatternGrid();
+  await runKdBatch(kdState.patternImages.map((_, i) => i));
 }
 
 // ─── Seamless Pattern: Source List ───────────────────────────────────────────

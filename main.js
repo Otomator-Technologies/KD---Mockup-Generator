@@ -440,7 +440,7 @@ ipcMain.handle('save-kd-base-pairs', (_, pairs) => {
 ipcMain.handle('get-kd-base-pairs', () => {
   const saved = loadConfig().kdBasePairs || [];
   // Filter out entries whose base file no longer exists; clear stale mask paths
-  const valid = saved.reduce((acc, { base, mask, curtainWidthMm }) => {
+  const valid = saved.reduce((acc, { base, mask, curtainWidthMm, selected }) => {
     if (!fs.existsSync(base)) {
       logWarn('IPC', `get-kd-base-pairs: base file missing, skipping — ${path.basename(base)}`);
       return acc;
@@ -449,7 +449,7 @@ ipcMain.handle('get-kd-base-pairs', () => {
     if (mask && !safeMask) {
       logWarn('IPC', `get-kd-base-pairs: mask file missing, cleared — ${path.basename(mask)}`);
     }
-    acc.push({ base, mask: safeMask, curtainWidthMm: curtainWidthMm || '' });
+    acc.push({ base, mask: safeMask, curtainWidthMm: curtainWidthMm || '', selected: selected !== false });
     return acc;
   }, []);
   log('IPC', `get-kd-base-pairs → ${valid.length}/${saved.length} pair(s) valid`);
@@ -577,6 +577,105 @@ ipcMain.handle('generate-mockups-kd', async (event, {
   log('KD', '─'.repeat(56));
 
   return { completed, total, errors };
+});
+
+// ─── IPC: KD Single Pattern Generate ─────────────────────────────────────────
+
+ipcMain.handle('generate-kd-pattern-single', async (event, {
+  pattern, baseImagePairs, destination, catalogueName,
+  scaleMode, patternRotation, patternTileWidthMm
+}) => {
+  const patternPath     = pattern.path;
+  const tileWidthMm     = parseFloat(pattern.tileWidthMm) || parseFloat(patternTileWidthMm) || 210;
+  const patternBaseName = path.basename(patternPath, path.extname(patternPath));
+  const folderName      = sanitizeName(catalogueName) + sanitizeName(patternBaseName);
+  const outputDir       = path.join(destination, folderName);
+  const total           = baseImagePairs.length;
+
+  log('KD', `Single: "${path.basename(patternPath)}" | tile=${tileWidthMm}mm | ${total} base → /${folderName}`);
+
+  try { fs.mkdirSync(outputDir, { recursive: true }); }
+  catch (err) { logError('KD', `Cannot create output dir: ${err.message}`); }
+
+  try { fs.copyFileSync(patternPath, path.join(outputDir, path.basename(patternPath))); }
+  catch (err) { logError('KD', `Cannot copy pattern: ${err.message}`); }
+
+  let completed = 0;
+  const errors  = [];
+
+  for (let bi = 0; bi < baseImagePairs.length; bi++) {
+    const { base: basePath, mask: maskPath, curtainWidthMm } = baseImagePairs[bi];
+    const baseFile    = path.basename(basePath);
+    const patternFile = path.basename(patternPath);
+    const callNum     = bi + 1;
+
+    event.sender.send('progress-update', {
+      completed, total,
+      status:  'running',
+      message: `${callNum}/${total}: ${baseFile}`
+    });
+
+    try {
+      const curtainBuf = fs.readFileSync(basePath);
+      const patternBuf = fs.readFileSync(patternPath);
+
+      const body = {
+        curtainBase64:      curtainBuf.toString('base64'),
+        curtainMimeType:    getMimeType(basePath),
+        patternBase64:      patternBuf.toString('base64'),
+        patternMimeType:    getMimeType(patternPath),
+        scaleMode:          scaleMode || 'a4-scan',
+        patternRotation:    parseInt(patternRotation) || 0,
+        patternRealWidthMm: tileWidthMm
+      };
+
+      if (maskPath) {
+        const maskBuf = fs.readFileSync(maskPath);
+        body.maskBase64   = maskBuf.toString('base64');
+        body.maskMimeType = getMimeType(maskPath);
+      }
+
+      if (curtainWidthMm && parseFloat(curtainWidthMm) > 0) {
+        body.curtainRealWidthMm = parseFloat(curtainWidthMm);
+      }
+
+      const data = await postJson(KD_API_URL, body);
+      if (!data.imageBase64) throw new Error('KD API response missing imageBase64 field');
+
+      const outputBuf  = Buffer.from(data.imageBase64, 'base64');
+      const outputPath = path.join(outputDir, `${callNum}.png`);
+      fs.writeFileSync(outputPath, outputBuf);
+
+      completed++;
+      logSuccess('KD', `✓ ${callNum}.png → ${folderName}`);
+
+      event.sender.send('progress-update', {
+        completed, total,
+        status:  'success',
+        message: `✓ Saved ${callNum}.png → ${folderName}`
+      });
+
+    } catch (err) {
+      const friendly = friendlyError(err);
+      logError('KD', `✗ [${callNum}] ${baseFile}: ${err.message}`);
+      errors.push({ base: baseFile, pattern: patternFile, error: friendly });
+      completed++;
+      event.sender.send('progress-update', {
+        completed, total,
+        status:  'error',
+        message: `✗ ${baseFile}: ${friendly}`
+      });
+    }
+  }
+
+  const imagesSaved = completed - errors.length;
+  if (errors.length === 0) {
+    logSuccess('KD', `Done: ${path.basename(patternPath)} → ${imagesSaved} mockup(s)`);
+  } else {
+    logWarn('KD', `Done: ${path.basename(patternPath)} → ${imagesSaved}/${completed} ok`);
+  }
+
+  return { success: errors.length === 0, errors, imagesSaved };
 });
 
 // ─── IPC: Seamless Pattern Generate ──────────────────────────────────────────

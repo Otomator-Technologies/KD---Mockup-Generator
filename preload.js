@@ -19,7 +19,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onSpImageStatus: (cb) => ipcRenderer.on('sp-image-status', (_, d) => cb(d)),
 
   // KD Mockup Generator flow
-  generateMockupsKd:       (opts)  => ipcRenderer.invoke('generate-mockups-kd', opts),
+  generateMockupsKd:        (opts)  => ipcRenderer.invoke('generate-mockups-kd', opts),
+  generateKdPatternSingle:  (opts)  => ipcRenderer.invoke('generate-kd-pattern-single', opts),
   getKdConfig:             ()      => ipcRenderer.invoke('get-kd-config'),
   saveKdConfig:            (cfg)   => ipcRenderer.invoke('save-kd-config', cfg),
   getKdBasePairs:          ()      => ipcRenderer.invoke('get-kd-base-pairs'),

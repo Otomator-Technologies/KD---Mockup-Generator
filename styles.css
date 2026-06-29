@@ -840,7 +840,25 @@ select.input option { background: #1c1c1c; color: #f0f0f0; }
   white-space: nowrap;
 }
 
-/* Pattern card — card is at least 200px tall, thumbnail stays 160×160 */
+/* Base-image cards — 200px tall, thumbnail 160×160 */
+#kdBasePairList .pair-item {
+  min-height: 200px;
+}
+#kdBasePairList .pair-base-section {
+  width: 160px;
+  height: auto;
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#kdBasePairList .pair-mask-section {
+  width: 160px;
+  height: auto;
+  min-height: 200px;
+}
+
+/* Pattern cards — 200px tall, thumbnail 160×160 */
 #kdPatternList .pair-item {
   min-height: 200px;
 }
@@ -1258,4 +1276,60 @@ select.input option { background: #1c1c1c; color: #f0f0f0; }
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* KD base image: select checkbox overlay */
+.pair-base-select {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  z-index: 2;
+}
+
+.pair-item--deselected {
+  opacity: 0.45;
+}
+.pair-item--deselected:hover {
+  opacity: 0.7;
+}
+
+/* KD pattern card: status + action row */
+.kd-card-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+  gap: 4px;
+}
+
+.kd-card-status {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.kd-card-status--idle    { color: var(--text-3); }
+.kd-card-status--running { color: var(--accent);  }
+.kd-card-status--done    { color: var(--success); }
+.kd-card-status--error   { color: var(--error);   }
+
+.kd-card-action {
+  font-size: 10px;
+  padding: 2px 8px;
+  height: 22px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.kd-pattern-error {
+  font-size: 9px;
+  color: var(--error);
+  margin-top: 3px;
+  line-height: 1.3;
+  word-break: break-word;
 }

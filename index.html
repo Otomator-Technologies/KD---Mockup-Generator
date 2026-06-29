@@ -197,7 +197,10 @@
 
           <div class="form-group">
             <label class="form-label">Default Tile Width <span class="optional-tag">mm</span></label>
-            <input type="number" id="kdPatternTileWidthMm" placeholder="210" class="input" min="1" step="0.1" value="210">
+            <div class="folder-row">
+              <input type="number" id="kdPatternTileWidthMm" placeholder="210" class="input" min="1" step="0.1" value="210">
+              <button class="btn btn-sm" id="kdApplyDefaultTileWidth" title="Copy this value to all pattern cards">Set All</button>
+            </div>
             <p class="form-hint">Pre-fills tile width for newly added patterns (A4 = 210 mm)</p>
           </div>
 
@@ -221,9 +224,11 @@
             </div>
           </div>
 
-          <button class="btn btn-run" id="kdRunBtn" disabled>
-            <span id="kdRunBtnText">Generate Mockups</span>
-          </button>
+          <div class="sp-run-buttons" id="kdRunButtons">
+            <button class="btn btn-run" id="kdRunPendingBtn" disabled>Generate Pending</button>
+            <button class="btn btn-run btn-secondary" id="kdRunAllBtn" disabled>Generate All</button>
+          </div>
+          <button class="btn btn-run btn-danger" id="kdStopBtn" style="display:none">&#9632; Stop Batch</button>
         </section>
 
         <!-- KD Section 3: Pattern Images -->
