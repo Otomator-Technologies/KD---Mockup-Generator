@@ -858,6 +858,11 @@ select.input option { background: #1c1c1c; color: #f0f0f0; }
   min-height: 200px;
 }
 
+/* Google AI pattern list — prevent flex-shrink so items overflow and scroll */
+#patternList .pair-item {
+  flex-shrink: 0;
+}
+
 /* Pattern cards — 200px tall, thumbnail 160×160 */
 #kdPatternList .pair-item {
   min-height: 200px;
@@ -1276,6 +1281,69 @@ select.input option { background: #1c1c1c; color: #f0f0f0; }
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* ─── File Converter ─────────────────────────────────────────────────────── */
+
+.conv-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  min-height: 48px;
+}
+
+.conv-item-info { flex: 1; min-width: 0; }
+
+.conv-item-name {
+  font-size: 12px;
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conv-item-error {
+  font-size: 10px;
+  color: var(--error);
+  margin-top: 2px;
+  word-break: break-word;
+}
+
+.conv-item-status {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+.conv-item-status--idle    { color: var(--text-3); }
+.conv-item-status--running { color: var(--accent);  }
+.conv-item-status--done    { color: var(--success); }
+.conv-item-status--error   { color: var(--error);   }
+
+.conv-item-remove {
+  background: none;
+  border: none;
+  color: var(--text-3);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.conv-item-remove:hover:not(:disabled) { color: var(--error); }
+.conv-item-remove:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.conv-item-retry {
+  font-size: 10px;
+  padding: 2px 7px;
+  height: 22px;
+  line-height: 1;
+  flex-shrink: 0;
 }
 
 /* KD base image: select checkbox overlay */

@@ -24,7 +24,15 @@ const spState = {
   isRunning:    false
 };
 
-let currentEngine = 'google'; // 'google' | 'kd' | 'sp' | 'crop'
+const convState = {
+  files:       [],  // [{ path, name, status: 'idle'|'running'|'done'|'error', error: null }]
+  destination: null,
+  isRunning:   false
+};
+
+let convAborted = false;
+
+let currentEngine = 'google'; // 'google' | 'kd' | 'sp' | 'crop' | 'conv'
 
 // ─── Crop State ───────────────────────────────────────────────────────────────
 const cropState = {
@@ -143,40 +151,57 @@ function switchEngine(engine) {
   document.getElementById('flowKD').classList.toggle('is-active',     engine === 'kd');
   document.getElementById('flowSP').classList.toggle('is-active',     engine === 'sp');
   document.getElementById('flowCrop').classList.toggle('is-active',   engine === 'crop');
+  document.getElementById('flowConv').classList.toggle('is-active',   engine === 'conv');
 
-  // API key row: hide for KD and Crop (no Gemini needed)
-  document.getElementById('googleApiKeyRow').style.display = (engine === 'kd' || engine === 'crop') ? 'none' : '';
+  // API key row: hide for KD, Crop and Conv (no Gemini needed)
+  document.getElementById('googleApiKeyRow').style.display = (engine === 'kd' || engine === 'crop' || engine === 'conv') ? 'none' : '';
 
   document.querySelectorAll('.engine-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.engine === engine);
   });
 
   setProgress(0, 'Ready to generate', null, '');
-  const labels = { google: 'Google AI', kd: 'KD Mockup Generator', sp: 'Seamless Pattern Generator' };
+  const labels = { google: 'Google AI', kd: 'KD Mockup Generator', sp: 'Seamless Pattern Generator', crop: 'Crop Pattern', conv: 'File Converter' };
   log('UI', `Engine switched to: ${labels[engine]}`);
 }
 
 // ─── WebP Conversion ─────────────────────────────────────────────────────────
 
-function canvasToWebp(base64, quality = 90) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width  = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      canvas.getContext('2d').drawImage(img, 0, 0);
-      const dataUrl = canvas.toDataURL('image/webp', quality / 100);
-      resolve(dataUrl.split(',')[1]);
-    };
-    img.onerror = reject;
-    // Detect mime type from first bytes so the browser decodes it correctly
-    const raw = atob(base64.slice(0, 12));
-    const mime = raw.charCodeAt(0) === 0x89 ? 'image/png'
-               : raw.charCodeAt(0) === 0xFF ? 'image/jpeg'
-               : 'image/jpeg';
-    img.src = `data:${mime};base64,${base64}`;
-  });
+async function canvasToWebp(base64, quality = 90, targetWidth = 0, targetHeight = 0) {
+  // Decode base64 → Uint8Array
+  const binaryStr = atob(base64);
+  const bytes = new Uint8Array(binaryStr.length);
+  for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+
+  // Detect MIME type from magic bytes
+  const mime = bytes[0] === 0x89 ? 'image/png'
+             : bytes[0] === 0xFF ? 'image/jpeg'
+             : 'image/jpeg';
+
+  // createImageBitmap returns the true intrinsic pixel dimensions — no DPR/CSS scaling
+  const blob   = new Blob([bytes], { type: mime });
+  const bitmap = await createImageBitmap(blob);
+
+  // Use caller-supplied dimensions (base image size) when provided, otherwise keep API response size
+  const w = (targetWidth  > 0) ? targetWidth  : bitmap.width;
+  const h = (targetHeight > 0) ? targetHeight : bitmap.height;
+
+  // OffscreenCanvas avoids any display-related downscaling that affects regular canvases
+  const canvas = new OffscreenCanvas(w, h);
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, w, h);
+  bitmap.close();
+
+  const webpBlob = await canvas.convertToBlob({ type: 'image/webp', quality: quality / 100 });
+  const arrayBuf = await webpBlob.arrayBuffer();
+  const uint8    = new Uint8Array(arrayBuf);
+
+  // Chunked btoa to avoid call-stack overflow on large images
+  let binary = '';
+  const chunk = 8192;
+  for (let i = 0; i < uint8.length; i += chunk) {
+    binary += String.fromCharCode(...uint8.subarray(i, i + chunk));
+  }
+  return btoa(binary);
 }
 
 // ─── Init ────────────────────────────────────────────────────────────────────
@@ -190,9 +215,9 @@ async function init() {
   });
 
   // WebP conversion helper — main process asks renderer to convert via canvas
-  window.electronAPI.onConvertToWebp(async ({ id, base64, quality }) => {
+  window.electronAPI.onConvertToWebp(async ({ id, base64, quality, targetWidth, targetHeight }) => {
     try {
-      const webpBase64 = await canvasToWebp(base64, quality);
+      const webpBase64 = await canvasToWebp(base64, quality, targetWidth, targetHeight);
       window.electronAPI.sendWebpResult(id, webpBase64);
     } catch (e) {
       console.error('WebP conversion failed:', e);
@@ -245,8 +270,10 @@ function bindEvents() {
   document.getElementById('engineKD').addEventListener('click',     () => switchEngine('kd'));
   document.getElementById('engineSP').addEventListener('click',     () => switchEngine('sp'));
   document.getElementById('engineCrop').addEventListener('click',   () => switchEngine('crop'));
+  document.getElementById('engineConv').addEventListener('click',   () => switchEngine('conv'));
 
   initCropPage();
+  initConvPage();
 
   // ── Google AI: API key ──
   document.getElementById('saveApiKey').addEventListener('click', async () => {
@@ -1858,6 +1885,209 @@ async function performCrop() {
     logError('Crop', `Save failed: ${result.error}`);
     showToast(`Save failed: ${result.error}`, 6000);
   }
+}
+
+// ─── File Converter ──────────────────────────────────────────────────────────
+
+function renderConvList() {
+  const container = document.getElementById('convFileList');
+  updateCount('convCount', convState.files.length);
+
+  const done   = convState.files.filter(f => f.status === 'done').length;
+  const failed = convState.files.filter(f => f.status === 'error').length;
+  document.getElementById('convSummaryTotal').textContent  = convState.files.length;
+  document.getElementById('convSummaryDone').textContent   = done;
+  document.getElementById('convSummaryFailed').textContent = failed;
+
+  if (convState.files.length === 0) {
+    container.innerHTML = `<div class="empty-state">
+      <div class="empty-icon"><svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="5" y="6" width="22" height="28" rx="3" stroke="currentColor" stroke-width="1.5"/><path d="M27 6l8 8v20a3 3 0 01-3 3H10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M27 6v8h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <p class="empty-label">No files selected</p>
+      <p class="empty-hint">Add JPEG or PNG images to convert to WebP</p>
+    </div>`;
+    return;
+  }
+
+  const statusLabels = { idle: '○ Pending', running: '⟳ Converting…', done: '✓ Done', error: '✗ Error' };
+  const dis = convState.isRunning ? 'disabled' : '';
+
+  container.innerHTML = convState.files.map((file, i) => {
+    const st       = file.status || 'idle';
+    const errorRow = (st === 'error' && file.error)
+      ? `<div class="conv-item-error">${escapeHtml(file.error.slice(0, 100))}</div>`
+      : '';
+    const retryBtn = (st === 'error' && !convState.isRunning)
+      ? `<button class="btn btn-sm conv-item-retry kd-card-regen" data-index="${i}">↺ Retry</button>`
+      : '';
+    return `<div class="conv-item">
+      <div class="conv-item-info">
+        <div class="conv-item-name" title="${escapeHtml(file.path)}">${escapeHtml(file.name)}</div>
+        ${errorRow}
+      </div>
+      ${retryBtn}
+      <span class="conv-item-status conv-item-status--${st}">${statusLabels[st]}</span>
+      <button class="conv-item-remove" data-index="${i}" title="Remove" ${dis}>×</button>
+    </div>`;
+  }).join('');
+
+  container.querySelectorAll('.conv-item-remove').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const idx = parseInt(e.currentTarget.dataset.index);
+      convState.files.splice(idx, 1);
+      renderConvList();
+      updateConvButton();
+    });
+  });
+
+  container.querySelectorAll('.kd-card-regen').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const idx = parseInt(e.currentTarget.dataset.index);
+      convState.files[idx].status = 'idle';
+      convState.files[idx].error  = null;
+      renderConvList();
+      updateConvButton();
+    });
+  });
+}
+
+function updateConvButton() {
+  if (convState.isRunning) return;
+  const hasPending = convState.files.some(f => f.status === 'idle');
+  document.getElementById('convRunBtn').disabled = !hasPending || !convState.destination;
+}
+
+function setConvRunning(running) {
+  convState.isRunning = running;
+  document.getElementById('convRunBtn').style.display  = running ? 'none' : '';
+  document.getElementById('convStopBtn').style.display = running ? ''     : 'none';
+  document.getElementById('convAddFiles').disabled          = running;
+  document.getElementById('convSelectDestination').disabled = running;
+  document.getElementById('convQuality').disabled           = running;
+  renderConvList();
+}
+
+async function convertFile(idx) {
+  const file = convState.files[idx];
+  if (!file || file.status === 'running') return;
+
+  file.status = 'running';
+  file.error  = null;
+  renderConvList();
+
+  try {
+    const quality  = parseInt(document.getElementById('convQuality').value) || 90;
+    const readResult = await window.electronAPI.readFileAsDataUrl(file.path);
+    if (!readResult.success) throw new Error(readResult.error || 'Could not read file');
+    const base64   = readResult.dataUrl.split(',')[1];
+    const webpB64  = await canvasToWebp(base64, quality);
+    const webpName = file.name.replace(/\.(jpe?g|png)$/i, '.webp');
+
+    const result = await window.electronAPI.saveCroppedImage({
+      dataUrl:     `data:image/webp;base64,${webpB64}`,
+      defaultName: webpName,
+      folderPath:  convState.destination
+    });
+
+    if (convState.files[idx]?.status !== 'running') return;
+
+    if (result.success) {
+      file.status = 'done';
+      logSuccess('CONV', `✓ ${webpName}`);
+    } else {
+      throw new Error('Save failed');
+    }
+  } catch (err) {
+    if (convState.files[idx]?.status !== 'running') return;
+    file.status = 'error';
+    file.error  = err.message;
+    logError('CONV', `✗ ${file.name}: ${err.message}`);
+  }
+
+  renderConvList();
+}
+
+async function runConversion() {
+  const pending = convState.files
+    .map((f, i) => ({ f, i }))
+    .filter(({ f }) => f.status === 'idle');
+
+  if (!pending.length) { showToast('No pending files'); return; }
+  if (!convState.destination) { showToast('Please select a destination folder'); return; }
+
+  convAborted = false;
+  setConvRunning(true);
+
+  const total = pending.length;
+  log('CONV', '─'.repeat(48));
+  log('CONV', `Converting ${total} file${total !== 1 ? 's' : ''} → WebP`);
+
+  const startTime = Date.now();
+  let doneCount = 0, errCount = 0;
+
+  for (let i = 0; i < pending.length; i++) {
+    if (convAborted) break;
+    const { idx } = { idx: pending[i].i };
+    setProgress(Math.round(i / total * 100), `Converting ${i + 1}/${total}: ${convState.files[idx].name}`, 'running', `${i} / ${total}`);
+    await convertFile(idx);
+    const st = convState.files[idx]?.status;
+    if (st === 'done')  doneCount++;
+    else if (st === 'error') errCount++;
+  }
+
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
+  if (!convAborted) {
+    if (errCount === 0) {
+      logSuccess('CONV', `Done in ${elapsed}s — ${doneCount} file${doneCount !== 1 ? 's' : ''} converted`);
+      setProgress(100, `All ${doneCount} file${doneCount !== 1 ? 's' : ''} converted`, 'success', `${doneCount} / ${total}`);
+      showToast(`Done! ${doneCount} file${doneCount !== 1 ? 's' : ''} saved as WebP`);
+    } else {
+      logWarn('CONV', `Done in ${elapsed}s — ${doneCount} ok, ${errCount} failed`);
+      setProgress(100, `Completed with ${errCount} error${errCount !== 1 ? 's' : ''}`, 'error', `${doneCount + errCount} / ${total}`);
+      showToast(`Done: ${doneCount} converted, ${errCount} failed`, 6000);
+    }
+  }
+
+  setConvRunning(false);
+  updateConvButton();
+}
+
+function initConvPage() {
+  document.getElementById('convAddFiles').addEventListener('click', async () => {
+    const paths = await window.electronAPI.selectImages();
+    if (!paths.length) return;
+
+    const existing = new Set(convState.files.map(f => f.path));
+    let dupes = 0;
+    paths.forEach(p => {
+      if (existing.has(p)) { dupes++; return; }
+      convState.files.push({ path: p, name: p.split('/').pop(), status: 'idle', error: null });
+    });
+    const added = paths.length - dupes;
+    log('CONV', `Files: +${added} added${dupes ? `, ${dupes} duplicate(s) skipped` : ''} → total ${convState.files.length}`);
+    renderConvList();
+    updateConvButton();
+  });
+
+  document.getElementById('convSelectDestination').addEventListener('click', async () => {
+    const dir = await window.electronAPI.selectDestination();
+    if (!dir) return;
+    convState.destination = dir;
+    document.getElementById('convDestinationPath').value = dir;
+    logSuccess('CONV', `Destination set: ${dir}`);
+    updateConvButton();
+  });
+
+  document.getElementById('convRunBtn').addEventListener('click', runConversion);
+
+  document.getElementById('convStopBtn').addEventListener('click', () => {
+    convAborted = true;
+    convState.files.forEach(f => { if (f.status === 'running') f.status = 'idle'; });
+    setConvRunning(false);
+    updateConvButton();
+    log('CONV', 'Conversion stopped by user');
+    setProgress(0, 'Stopped', 'error', '');
+  });
 }
 
 // ─── Start ───────────────────────────────────────────────────────────────────

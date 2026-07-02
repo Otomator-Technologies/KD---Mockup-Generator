@@ -18,6 +18,7 @@
           <button class="engine-btn" id="engineKD" data-engine="kd">KD Mockup Generator</button>
           <button class="engine-btn" id="engineSP" data-engine="sp">Seamless Patterns</button>
           <button class="engine-btn" id="engineCrop" data-engine="crop">Crop Pattern</button>
+          <button class="engine-btn" id="engineConv" data-engine="conv">File Converter</button>
         </div>
       </div>
       <div class="header-right">
@@ -433,6 +434,73 @@
             <button class="btn btn-run" id="cropSaveBtn" disabled>Crop &amp; Save</button>
             <button class="btn btn-run btn-secondary" id="cropSaveAsIsBtn" disabled>Save As-Is</button>
           </div>
+        </section>
+
+      </main>
+    </div>
+
+    <!-- ═══ File Converter Flow ═══ -->
+    <div id="flowConv" class="flow">
+      <main class="main">
+
+        <!-- Panel 1: File list -->
+        <section class="panel">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h2 class="panel-title">Files to Convert</h2>
+              <span class="count-badge" id="convCount">0</span>
+            </div>
+            <button class="btn btn-add" id="convAddFiles">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              Add Files
+            </button>
+          </div>
+          <div class="pair-list" id="convFileList">
+            <div class="empty-state">
+              <div class="empty-icon">
+                <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="5" y="6" width="22" height="28" rx="3" stroke="currentColor" stroke-width="1.5"/><path d="M27 6l8 8v20a3 3 0 01-3 3H10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M27 6v8h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+              <p class="empty-label">No files selected</p>
+              <p class="empty-hint">Add JPEG or PNG images to convert to WebP</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- Panel 2: Settings -->
+        <section class="panel panel-settings">
+          <h2 class="panel-title" style="margin-bottom: 20px;">Converter Settings</h2>
+
+          <div class="form-group">
+            <label class="form-label">Destination Folder</label>
+            <div class="folder-row">
+              <input type="text" id="convDestinationPath" placeholder="No folder selected" class="input input-readonly" readonly>
+              <button class="btn btn-sm" id="convSelectDestination">Browse</button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Quality <span class="optional-tag">%</span></label>
+            <input type="number" id="convQuality" class="input" value="90" min="1" max="100" step="1">
+            <p class="form-hint">WebP compression quality (1–100)</p>
+          </div>
+
+          <div class="summary-box">
+            <div class="summary-row">
+              <span class="summary-label">Files selected</span>
+              <span class="summary-value" id="convSummaryTotal">0</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">Converted</span>
+              <span class="summary-value" id="convSummaryDone">0</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">Failed</span>
+              <span class="summary-value" id="convSummaryFailed">0</span>
+            </div>
+          </div>
+
+          <button class="btn btn-run" id="convRunBtn" disabled>Convert to WebP</button>
+          <button class="btn btn-run btn-danger" id="convStopBtn" style="display:none; margin-top:8px;">&#9632; Stop</button>
         </section>
 
       </main>

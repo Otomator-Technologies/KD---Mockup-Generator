@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
@@ -207,7 +207,7 @@ function getMimeType(filePath) {
   return { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp' }[ext] || 'image/jpeg';
 }
 
-function toWebp(buf, quality = 90) {
+function toWebp(buf, quality = 90, targetWidth = 0, targetHeight = 0) {
   return new Promise((resolve, reject) => {
     if (!mainWindow) { reject(new Error('No window for WebP conversion')); return; }
     const id = Math.random().toString(36).slice(2);
@@ -219,7 +219,7 @@ function toWebp(buf, quality = 90) {
       clearTimeout(timer);
       resolve(Buffer.from(webpBase64, 'base64'));
     });
-    mainWindow.webContents.send('convert-to-webp', { id, base64: buf.toString('base64'), quality });
+    mainWindow.webContents.send('convert-to-webp', { id, base64: buf.toString('base64'), quality, targetWidth, targetHeight });
   });
 }
 
@@ -346,6 +346,8 @@ ipcMain.handle('generate-mockups', async (event, { apiKey, baseImages, patternIm
         const patternBuf = fs.readFileSync(patternPath);
         log('FS', `Read: ${baseFile} (${kb(curtainBuf.length)}) + ${patternFile} (${kb(patternBuf.length)})`);
 
+        const { width: baseW, height: baseH } = nativeImage.createFromBuffer(curtainBuf).getSize();
+
         // Call API
         const data = await postJson(API_URL, {
           curtainBase64:  curtainBuf.toString('base64'),
@@ -360,8 +362,8 @@ ipcMain.handle('generate-mockups', async (event, { apiKey, baseImages, patternIm
           throw new Error('API response missing imageBase64 field');
         }
 
-        // Save output
-        const outputBuf  = await toWebp(Buffer.from(data.imageBase64, 'base64'));
+        // Save output at base image dimensions
+        const outputBuf  = await toWebp(Buffer.from(data.imageBase64, 'base64'), 90, baseW, baseH);
         const outputPath = path.join(outputDir, `${imageIndex}.webp`);
         fs.writeFileSync(outputPath, outputBuf);
 
@@ -448,6 +450,8 @@ ipcMain.handle('generate-mockup-single', async (event, { apiKey, pattern, baseIm
       const curtainBuf = fs.readFileSync(basePath);
       const patternBuf = fs.readFileSync(patternPath);
 
+      const { width: baseW, height: baseH } = nativeImage.createFromBuffer(curtainBuf).getSize();
+
       const data = await postJson(API_URL, {
         curtainBase64:   curtainBuf.toString('base64'),
         curtainMimeType: getMimeType(basePath),
@@ -459,7 +463,7 @@ ipcMain.handle('generate-mockup-single', async (event, { apiKey, pattern, baseIm
 
       if (!data.imageBase64) throw new Error('API response missing imageBase64 field');
 
-      const outputBuf  = await toWebp(Buffer.from(data.imageBase64, 'base64'));
+      const outputBuf  = await toWebp(Buffer.from(data.imageBase64, 'base64'), 90, baseW, baseH);
       const outputPath = path.join(outputDir, `${callNum}.webp`);
       fs.writeFileSync(outputPath, outputBuf);
 
@@ -609,6 +613,8 @@ ipcMain.handle('generate-mockups-kd', async (event, {
         const curtainBuf = fs.readFileSync(basePath);
         const patternBuf = fs.readFileSync(patternPath);
 
+        const { width: baseW, height: baseH } = nativeImage.createFromBuffer(curtainBuf).getSize();
+
         const body = {
           curtainBase64:      curtainBuf.toString('base64'),
           curtainMimeType:    getMimeType(basePath),
@@ -633,7 +639,7 @@ ipcMain.handle('generate-mockups-kd', async (event, {
 
         if (!data.imageBase64) throw new Error('KD API response missing imageBase64 field');
 
-        const outputBuf  = await toWebp(Buffer.from(data.imageBase64, 'base64'));
+        const outputBuf  = await toWebp(Buffer.from(data.imageBase64, 'base64'), 90, baseW, baseH);
         const outputPath = path.join(outputDir, `${imageIndex}.webp`);
         fs.writeFileSync(outputPath, outputBuf);
 
@@ -718,6 +724,8 @@ ipcMain.handle('generate-kd-pattern-single', async (event, {
       const curtainBuf = fs.readFileSync(basePath);
       const patternBuf = fs.readFileSync(patternPath);
 
+      const { width: baseW, height: baseH } = nativeImage.createFromBuffer(curtainBuf).getSize();
+
       const body = {
         curtainBase64:      curtainBuf.toString('base64'),
         curtainMimeType:    getMimeType(basePath),
@@ -741,7 +749,7 @@ ipcMain.handle('generate-kd-pattern-single', async (event, {
       const data = await postJson(KD_API_URL, body);
       if (!data.imageBase64) throw new Error('KD API response missing imageBase64 field');
 
-      const outputBuf  = await toWebp(Buffer.from(data.imageBase64, 'base64'));
+      const outputBuf  = await toWebp(Buffer.from(data.imageBase64, 'base64'), 90, baseW, baseH);
       const outputPath = path.join(outputDir, `${callNum}.webp`);
       fs.writeFileSync(outputPath, outputBuf);
 
