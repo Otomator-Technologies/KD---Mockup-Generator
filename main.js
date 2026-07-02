@@ -207,6 +207,22 @@ function getMimeType(filePath) {
   return { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp' }[ext] || 'image/jpeg';
 }
 
+function toWebp(buf, quality = 90) {
+  return new Promise((resolve, reject) => {
+    if (!mainWindow) { reject(new Error('No window for WebP conversion')); return; }
+    const id = Math.random().toString(36).slice(2);
+    const timer = setTimeout(() => {
+      ipcMain.removeAllListeners(`webp-result-${id}`);
+      reject(new Error('WebP conversion timed out'));
+    }, 20000);
+    ipcMain.once(`webp-result-${id}`, (_, webpBase64) => {
+      clearTimeout(timer);
+      resolve(Buffer.from(webpBase64, 'base64'));
+    });
+    mainWindow.webContents.send('convert-to-webp', { id, base64: buf.toString('base64'), quality });
+  });
+}
+
 // ─── HTTP ────────────────────────────────────────────────────────────────────
 
 function postJson(url, body) {
@@ -345,18 +361,18 @@ ipcMain.handle('generate-mockups', async (event, { apiKey, baseImages, patternIm
         }
 
         // Save output
-        const outputBuf = Buffer.from(data.imageBase64, 'base64');
-        const outputPath = path.join(outputDir, `${imageIndex}.png`);
+        const outputBuf  = await toWebp(Buffer.from(data.imageBase64, 'base64'));
+        const outputPath = path.join(outputDir, `${imageIndex}.webp`);
         fs.writeFileSync(outputPath, outputBuf);
 
         completed++;
-        logSuccess('GEN', `✓ [${callNum}/${total}] Saved ${imageIndex}.png (${kb(outputBuf.length)}) → ${folderName}`);
+        logSuccess('GEN', `✓ [${callNum}/${total}] Saved ${imageIndex}.webp (${kb(outputBuf.length)}) → ${folderName}`);
 
         event.sender.send('progress-update', {
           completed,
           total,
           status: 'success',
-          message: `✓ Saved ${imageIndex}.png → ${folderName}`
+          message: `✓ Saved ${imageIndex}.webp → ${folderName}`
         });
 
       } catch (err) {
@@ -395,6 +411,89 @@ ipcMain.handle('generate-mockups', async (event, { apiKey, baseImages, patternIm
 });
 
 // ─── IPC: Select Single Image ─────────────────────────────────────────────────
+
+// ─── IPC: Generate Single Pattern (Google AI) ────────────────────────────────
+
+ipcMain.handle('generate-mockup-single', async (event, { apiKey, pattern, baseImages, destination, catalogueName, scaleMode }) => {
+  const patternPath     = pattern;
+  const patternBaseName = path.basename(patternPath, path.extname(patternPath));
+  const folderName      = sanitizeName(catalogueName) + sanitizeName(patternBaseName);
+  const outputDir       = path.join(destination, folderName);
+  const total           = baseImages.length;
+
+  log('GEN', `Single: "${path.basename(patternPath)}" | ${total} base → /${folderName}`);
+
+  try { fs.mkdirSync(outputDir, { recursive: true }); }
+  catch (err) { logError('FS', `Cannot create output dir: ${err.message}`); }
+
+  try { fs.copyFileSync(patternPath, path.join(outputDir, path.basename(patternPath))); }
+  catch (err) { logError('FS', `Cannot copy pattern: ${err.message}`); }
+
+  let completed = 0;
+  const errors  = [];
+
+  for (let bi = 0; bi < baseImages.length; bi++) {
+    const basePath    = baseImages[bi];
+    const baseFile    = path.basename(basePath);
+    const patternFile = path.basename(patternPath);
+    const callNum     = bi + 1;
+
+    event.sender.send('progress-update', {
+      completed, total,
+      status:  'running',
+      message: `${callNum}/${total}: ${baseFile} + ${patternFile}`
+    });
+
+    try {
+      const curtainBuf = fs.readFileSync(basePath);
+      const patternBuf = fs.readFileSync(patternPath);
+
+      const data = await postJson(API_URL, {
+        curtainBase64:   curtainBuf.toString('base64'),
+        curtainMimeType: getMimeType(basePath),
+        patternBase64:   patternBuf.toString('base64'),
+        patternMimeType: getMimeType(patternPath),
+        scaleMode:       scaleMode || 'a4-scan',
+        apiKeyOverride:  apiKey || ''
+      });
+
+      if (!data.imageBase64) throw new Error('API response missing imageBase64 field');
+
+      const outputBuf  = await toWebp(Buffer.from(data.imageBase64, 'base64'));
+      const outputPath = path.join(outputDir, `${callNum}.webp`);
+      fs.writeFileSync(outputPath, outputBuf);
+
+      completed++;
+      logSuccess('GEN', `✓ ${callNum}.webp → ${folderName}`);
+
+      event.sender.send('progress-update', {
+        completed, total,
+        status:  'success',
+        message: `✓ Saved ${callNum}.webp → ${folderName}`
+      });
+
+    } catch (err) {
+      const friendly = friendlyError(err);
+      logError('GEN', `✗ [${callNum}] ${baseFile}: ${err.message}`);
+      errors.push({ base: baseFile, pattern: patternFile, error: friendly });
+      completed++;
+      event.sender.send('progress-update', {
+        completed, total,
+        status:  'error',
+        message: `✗ ${baseFile}: ${friendly}`
+      });
+    }
+  }
+
+  const imagesSaved = completed - errors.length;
+  if (errors.length === 0) {
+    logSuccess('GEN', `Done: ${path.basename(patternPath)} → ${imagesSaved} mockup(s)`);
+  } else {
+    logWarn('GEN', `Done: ${path.basename(patternPath)} → ${imagesSaved}/${completed} ok`);
+  }
+
+  return { success: errors.length === 0, errors, imagesSaved };
+});
 
 ipcMain.handle('select-single-image', async () => {
   log('IPC', 'select-single-image → opening dialog');
@@ -534,17 +633,17 @@ ipcMain.handle('generate-mockups-kd', async (event, {
 
         if (!data.imageBase64) throw new Error('KD API response missing imageBase64 field');
 
-        const outputBuf  = Buffer.from(data.imageBase64, 'base64');
-        const outputPath = path.join(outputDir, `${imageIndex}.png`);
+        const outputBuf  = await toWebp(Buffer.from(data.imageBase64, 'base64'));
+        const outputPath = path.join(outputDir, `${imageIndex}.webp`);
         fs.writeFileSync(outputPath, outputBuf);
 
         completed++;
-        logSuccess('KD', `✓ [${callNum}/${total}] ${imageIndex}.png → ${folderName}`);
+        logSuccess('KD', `✓ [${callNum}/${total}] ${imageIndex}.webp → ${folderName}`);
 
         event.sender.send('progress-update', {
           completed, total,
           status:  'success',
-          message: `✓ Saved ${imageIndex}.png → ${folderName}`
+          message: `✓ Saved ${imageIndex}.webp → ${folderName}`
         });
 
       } catch (err) {
@@ -642,17 +741,17 @@ ipcMain.handle('generate-kd-pattern-single', async (event, {
       const data = await postJson(KD_API_URL, body);
       if (!data.imageBase64) throw new Error('KD API response missing imageBase64 field');
 
-      const outputBuf  = Buffer.from(data.imageBase64, 'base64');
-      const outputPath = path.join(outputDir, `${callNum}.png`);
+      const outputBuf  = await toWebp(Buffer.from(data.imageBase64, 'base64'));
+      const outputPath = path.join(outputDir, `${callNum}.webp`);
       fs.writeFileSync(outputPath, outputBuf);
 
       completed++;
-      logSuccess('KD', `✓ ${callNum}.png → ${folderName}`);
+      logSuccess('KD', `✓ ${callNum}.webp → ${folderName}`);
 
       event.sender.send('progress-update', {
         completed, total,
         status:  'success',
-        message: `✓ Saved ${callNum}.png → ${folderName}`
+        message: `✓ Saved ${callNum}.webp → ${folderName}`
       });
 
     } catch (err) {

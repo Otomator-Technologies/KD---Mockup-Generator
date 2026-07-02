@@ -7,7 +7,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectDestination:       ()      => ipcRenderer.invoke('select-destination'),
 
   // Google AI flow
-  generateMockups:         (opts)  => ipcRenderer.invoke('generate-mockups', opts),
+  generateMockups:       (opts) => ipcRenderer.invoke('generate-mockups', opts),
+  generateMockupSingle:  (opts) => ipcRenderer.invoke('generate-mockup-single', opts),
   getApiKey:               ()      => ipcRenderer.invoke('get-api-key'),
   saveApiKey:              (key)   => ipcRenderer.invoke('save-api-key', key),
   getScaleMode:            ()      => ipcRenderer.invoke('get-scale-mode'),
@@ -33,5 +34,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Events
   onProgressUpdate:        (cb)    => ipcRenderer.on('progress-update', (_, d) => cb(d)),
   onLogEntry:              (cb)    => ipcRenderer.on('log-entry',        (_, d) => cb(d)),
-  removeProgressListeners: ()      => ipcRenderer.removeAllListeners('progress-update')
+  removeProgressListeners: ()      => ipcRenderer.removeAllListeners('progress-update'),
+
+  // WebP conversion (renderer does the canvas work, main process asks for it)
+  onConvertToWebp: (cb) => ipcRenderer.on('convert-to-webp', (_, d) => cb(d)),
+  sendWebpResult:  (id, base64) => ipcRenderer.send(`webp-result-${id}`, base64)
 });

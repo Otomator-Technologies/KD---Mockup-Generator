@@ -68,7 +68,7 @@
               Add Patterns
             </button>
           </div>
-          <div class="image-grid" id="patternImageGrid">
+          <div class="pair-list" id="patternList">
             <div class="empty-state">
               <div class="empty-icon">
                 <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="4" y="4" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="22" y="4" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="4" y="22" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="22" y="22" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/></svg>
@@ -123,9 +123,11 @@
             </div>
           </div>
 
-          <button class="btn btn-run" id="runBtn" disabled>
-            <span id="runBtnText">Generate Mockups</span>
-          </button>
+          <div class="sp-run-buttons" id="runButtons">
+            <button class="btn btn-run" id="runPendingBtn" disabled>Generate Pending</button>
+            <button class="btn btn-run btn-secondary" id="runAllBtn" disabled>Generate All</button>
+          </div>
+          <button class="btn btn-run btn-danger" id="stopBtn" style="display:none">&#9632; Stop Batch</button>
         </section>
 
       </main>

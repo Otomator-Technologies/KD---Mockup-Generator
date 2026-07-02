@@ -1,11 +1,13 @@
 // ─── State ───────────────────────────────────────────────────────────────────
 
 const state = {
-  baseImages:    [],
-  patternImages: [],
+  baseImages:    [],        // string[]
+  patternImages: [],        // [{ path, status, error }]
   destination:   null,
   isRunning:     false
 };
+
+let batchAborted = false;
 
 const kdState = {
   baseImagePairs: [], // [{ base: string, mask: string|null, curtainWidthMm: string }]
@@ -154,6 +156,29 @@ function switchEngine(engine) {
   log('UI', `Engine switched to: ${labels[engine]}`);
 }
 
+// ─── WebP Conversion ─────────────────────────────────────────────────────────
+
+function canvasToWebp(base64, quality = 90) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width  = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext('2d').drawImage(img, 0, 0);
+      const dataUrl = canvas.toDataURL('image/webp', quality / 100);
+      resolve(dataUrl.split(',')[1]);
+    };
+    img.onerror = reject;
+    // Detect mime type from first bytes so the browser decodes it correctly
+    const raw = atob(base64.slice(0, 12));
+    const mime = raw.charCodeAt(0) === 0x89 ? 'image/png'
+               : raw.charCodeAt(0) === 0xFF ? 'image/jpeg'
+               : 'image/jpeg';
+    img.src = `data:${mime};base64,${base64}`;
+  });
+}
+
 // ─── Init ────────────────────────────────────────────────────────────────────
 
 async function init() {
@@ -162,6 +187,17 @@ async function init() {
   // Forward main-process log entries into the in-app console
   window.electronAPI.onLogEntry(({ timestamp, level, tag, message }) => {
     appendConsoleEntry({ timestamp, level, tag, message });
+  });
+
+  // WebP conversion helper — main process asks renderer to convert via canvas
+  window.electronAPI.onConvertToWebp(async ({ id, base64, quality }) => {
+    try {
+      const webpBase64 = await canvasToWebp(base64, quality);
+      window.electronAPI.sendWebpResult(id, webpBase64);
+    } catch (e) {
+      console.error('WebP conversion failed:', e);
+      window.electronAPI.sendWebpResult(id, base64); // fallback: return original bytes
+    }
   });
 
 
@@ -240,7 +276,7 @@ function bindEvents() {
     renderGrid('baseImageGrid', state.baseImages, 'base');
     updateCount('baseCount', state.baseImages.length);
     updateSummary();
-    updateRunButton();
+    updateRunButtons();
   });
 
   // ── Google AI: Pattern images ──
@@ -249,18 +285,21 @@ function bindEvents() {
     const paths = await window.electronAPI.selectImages();
     if (!paths.length) { log('UI', 'Image picker cancelled'); return; }
 
-    const existing = new Set(state.patternImages);
+    const existing = new Set(state.patternImages.map(p => p.path));
     let dupes = 0;
-    paths.forEach(p => { if (existing.has(p)) { dupes++; return; } state.patternImages.push(p); });
+    paths.forEach(p => {
+      if (existing.has(p)) { dupes++; return; }
+      state.patternImages.push({ path: p, status: 'idle', error: null });
+    });
     const added = paths.length - dupes;
 
     log('UI', `Patterns: +${added} added${dupes ? `, ${dupes} duplicate(s) skipped` : ''} → total ${state.patternImages.length}`);
     paths.filter(p => !existing.has(p)).forEach(p => log('UI', `  + ${p.split('/').pop()}`));
 
-    renderGrid('patternImageGrid', state.patternImages, 'pattern');
+    renderPatternList();
     updateCount('patternCount', state.patternImages.length);
     updateSummary();
-    updateRunButton();
+    updateRunButtons();
   });
 
   // ── Google AI: Destination ──
@@ -271,12 +310,12 @@ function bindEvents() {
     state.destination = dir;
     document.getElementById('destinationPath').value = dir;
     logSuccess('UI', `Destination set: ${dir}`);
-    updateRunButton();
+    updateRunButtons();
   });
 
   // ── Google AI: Catalogue name ──
   document.getElementById('catalogueName').addEventListener('input', (e) => {
-    updateRunButton();
+    updateRunButtons();
     if (e.target.value.trim()) log('UI', `Catalogue name: "${e.target.value.trim()}"`);
   });
 
@@ -286,8 +325,10 @@ function bindEvents() {
     log('UI', `Scale mode changed to: ${e.target.value}`);
   });
 
-  // ── Google AI: Run button ──
-  document.getElementById('runBtn').addEventListener('click', runGeneration);
+  // ── Google AI: Run buttons ──
+  document.getElementById('runPendingBtn').addEventListener('click', runPending);
+  document.getElementById('runAllBtn').addEventListener('click', runAll);
+  document.getElementById('stopBtn').addEventListener('click', stopBatch);
 
   // ── KD: Base images ──
   document.getElementById('kdAddBaseImages').addEventListener('click', async () => {
@@ -474,19 +515,96 @@ function renderGrid(containerId, images, type, onRemove) {
         return;
       }
 
-      if (type === 'base') {
-        const removed = state.baseImages.splice(idx, 1)[0];
-        log('UI', `Removed base image: ${removed.split('/').pop()} → total ${state.baseImages.length}`);
-        renderGrid('baseImageGrid', state.baseImages, 'base');
-        updateCount('baseCount', state.baseImages.length);
-      } else {
-        const removed = state.patternImages.splice(idx, 1)[0];
-        log('UI', `Removed pattern: ${removed.split('/').pop()} → total ${state.patternImages.length}`);
-        renderGrid('patternImageGrid', state.patternImages, 'pattern');
-        updateCount('patternCount', state.patternImages.length);
-      }
+      const removed = state.baseImages.splice(idx, 1)[0];
+      log('UI', `Removed base image: ${removed.split('/').pop()} → total ${state.baseImages.length}`);
+      renderGrid('baseImageGrid', state.baseImages, 'base');
+      updateCount('baseCount', state.baseImages.length);
       updateSummary();
-      updateRunButton();
+      updateRunButtons();
+    });
+  });
+}
+
+// ─── Google AI: Pattern List ─────────────────────────────────────────────────
+
+function renderPatternList() {
+  const container = document.getElementById('patternList');
+  updateCount('patternCount', state.patternImages.length);
+
+  if (state.patternImages.length === 0) {
+    container.innerHTML = `<div class="empty-state">
+      <div class="empty-icon"><svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="4" y="4" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="22" y="4" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="4" y="22" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="22" y="22" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/></svg></div>
+      <p class="empty-label">No patterns selected</p>
+      <p class="empty-hint">Fabric prints, textures or designs</p>
+    </div>`;
+    return;
+  }
+
+  const statusLabels = { idle: '○ Pending', running: '⟳ Generating…', done: '✓ Done', error: '✗ Error' };
+  const dis = state.isRunning ? 'disabled' : '';
+
+  container.innerHTML = state.patternImages.map((item, i) => {
+    const name    = item.path.split('/').pop();
+    const fileUrl = encodeURI('file://' + item.path);
+    const st      = item.status || 'idle';
+
+    let actionBtn;
+    if (st === 'running') {
+      actionBtn = `<button class="btn btn-sm kd-card-action kd-card-stop" data-index="${i}">■ Stop</button>`;
+    } else if (st === 'idle') {
+      actionBtn = `<button class="btn btn-sm kd-card-action kd-card-gen" data-index="${i}" ${dis}>▶ Generate</button>`;
+    } else {
+      actionBtn = `<button class="btn btn-sm kd-card-action kd-card-regen" data-index="${i}" ${dis}>${st === 'error' ? '↺ Retry' : '↺ Regen'}</button>`;
+    }
+
+    const errorRow = (st === 'error' && item.error)
+      ? `<div class="kd-pattern-error" title="${escapeHtml(item.error)}">${escapeHtml(item.error.slice(0, 80))}${item.error.length > 80 ? '…' : ''}</div>`
+      : '';
+
+    return `<div class="pair-item" data-index="${i}">
+      <div class="pair-base-section">
+        <img src="${fileUrl}" alt="${escapeHtml(name)}" class="pair-thumb" draggable="false">
+        <button class="pair-base-remove" data-index="${i}" title="Remove" ${dis}>×</button>
+      </div>
+      <div class="pair-footer">
+        <div class="pair-filename" title="${escapeHtml(name)}">${escapeHtml(name)}</div>
+        ${errorRow}
+        <div class="kd-card-bottom">
+          <span class="kd-card-status kd-card-status--${st}">${statusLabels[st]}</span>
+          ${actionBtn}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  container.querySelectorAll('.pair-base-remove').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const idx     = parseInt(e.currentTarget.dataset.index);
+      const removed = state.patternImages.splice(idx, 1)[0];
+      log('UI', `Removed pattern: ${removed.path.split('/').pop()} → total ${state.patternImages.length}`);
+      renderPatternList();
+      updateSummary();
+      updateRunButtons();
+    });
+  });
+
+  container.querySelectorAll('.kd-card-gen').forEach(btn => {
+    btn.addEventListener('click', (e) => generatePattern(parseInt(e.currentTarget.dataset.index)));
+  });
+
+  container.querySelectorAll('.kd-card-stop').forEach(btn => {
+    btn.addEventListener('click', (e) => stopPattern(parseInt(e.currentTarget.dataset.index)));
+  });
+
+  container.querySelectorAll('.kd-card-regen').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const idx  = parseInt(e.currentTarget.dataset.index);
+      const item = state.patternImages[idx];
+      item.status = 'idle';
+      item.error  = null;
+      renderPatternList();
+      generatePattern(idx);
     });
   });
 }
@@ -727,35 +845,30 @@ function updateSummary() {
   document.getElementById('summaryTotal').textContent   = b * p;
 }
 
-function updateRunButton() {
+function updateRunButtons() {
+  if (state.isRunning) return;
   const catalogueName = document.getElementById('catalogueName').value.trim();
-  const ready = (
-    !state.isRunning &&
+  const baseReady = (
     catalogueName.length > 0 &&
     state.baseImages.length > 0 &&
     state.patternImages.length > 0 &&
     state.destination !== null
   );
-  const btn  = document.getElementById('runBtn');
-  const prev = btn.disabled;
-  btn.disabled = !ready;
-  if (prev !== btn.disabled) {
-    log('UI', ready
-      ? `Run button enabled — ${state.baseImages.length}×${state.patternImages.length} = ${state.baseImages.length * state.patternImages.length} calls`
-      : 'Run button disabled'
-    );
-  }
+  const hasPending = state.patternImages.some(p => p.status === 'idle');
+  document.getElementById('runPendingBtn').disabled = !baseReady || !hasPending;
+  document.getElementById('runAllBtn').disabled     = !baseReady;
 }
 
 function setRunning(running) {
   state.isRunning = running;
-  document.getElementById('runBtn').disabled = running;
-  document.getElementById('runBtnText').textContent = running ? 'Generating…' : 'Generate Mockups';
+  document.getElementById('runButtons').style.display = running ? 'none' : '';
+  document.getElementById('stopBtn').style.display    = running ? ''     : 'none';
   ['addBaseImages', 'addPatternImages', 'selectDestination'].forEach(id => {
     document.getElementById(id).disabled = running;
   });
   document.getElementById('catalogueName').disabled = running;
   document.getElementById('scaleMode').disabled = running;
+  renderPatternList();
 }
 
 // ─── UI State: KD ────────────────────────────────────────────────────────────
@@ -819,24 +932,82 @@ function setProgress(pct, message, status, counter) {
 
 // ─── Generation: Google AI ───────────────────────────────────────────────────
 
-async function runGeneration() {
+async function generatePattern(idx) {
+  const item = state.patternImages[idx];
+  if (!item || item.status === 'running') return;
+
   const apiKey        = document.getElementById('apiKey').value.trim();
   const catalogueName = document.getElementById('catalogueName').value.trim();
   const scaleMode     = document.getElementById('scaleMode').value;
 
-  if (!catalogueName) { logWarn('UI', 'Blocked — no catalogue name'); showToast('Please enter a catalogue name'); return; }
-  if (!state.destination) { logWarn('UI', 'Blocked — no destination'); showToast('Please select a destination folder'); return; }
+  if (!catalogueName) { showToast('Please enter a catalogue name'); return; }
+  if (!state.destination) { showToast('Please select a destination folder'); return; }
 
-  const total = state.baseImages.length * state.patternImages.length;
+  item.status = 'running';
+  item.error  = null;
+  renderPatternList();
 
-  log('UI', '─'.repeat(48));
-  log('UI', `Starting: ${state.baseImages.length} base × ${state.patternImages.length} patterns = ${total} calls`);
-  log('UI', `Catalogue: "${catalogueName}" | Scale: ${scaleMode} | Dest: ${state.destination}`);
-  log('UI', '─'.repeat(48));
-
-  setRunning(true);
   window.electronAPI.removeProgressListeners();
-  setProgress(0, `Starting ${total} generation${total !== 1 ? 's' : ''}…`, 'running', `0 / ${total}`);
+  const total = state.baseImages.length;
+  setProgress(0, `Starting ${total} render${total !== 1 ? 's' : ''}…`, 'running', `0 / ${total}`);
+  window.electronAPI.onProgressUpdate(({ completed, total: t, status, message }) => {
+    setProgress(Math.round((completed / t) * 100), message, status, `${completed} / ${t}`);
+  });
+
+  const result = await window.electronAPI.generateMockupSingle({
+    apiKey,
+    pattern:     item.path,
+    baseImages:  state.baseImages,
+    destination: state.destination,
+    catalogueName,
+    scaleMode
+  });
+
+  if (state.patternImages[idx]?.status !== 'running') return;
+
+  item.status = result.success ? 'done' : 'error';
+  item.error  = result.success ? null : (result.errors?.[0]?.error || 'Unknown error');
+
+  if (result.success) { logSuccess('UI', `✓ ${item.path.split('/').pop()}`); }
+  else                { logError('UI', `✗ ${item.path.split('/').pop()}: ${item.error}`); }
+
+  renderPatternList();
+  updateRunButtons();
+}
+
+function stopPattern(idx) {
+  const item = state.patternImages[idx];
+  if (item?.status === 'running') {
+    log('UI', `Stopped: ${item.path.split('/').pop()}`);
+    item.status = 'idle';
+    renderPatternList();
+  }
+}
+
+function stopBatch() {
+  batchAborted = true;
+  state.patternImages.forEach((_, i) => stopPattern(i));
+  setRunning(false);
+  updateRunButtons();
+  log('UI', 'Batch stopped by user');
+  setProgress(0, 'Stopped', 'error', '');
+}
+
+async function runBatch(indices) {
+  const catalogueName = document.getElementById('catalogueName').value.trim();
+
+  if (!catalogueName) { showToast('Please enter a catalogue name'); return; }
+  if (!state.destination) { showToast('Please select a destination folder'); return; }
+  if (!state.baseImages.length) { showToast('No base images added'); return; }
+  if (!indices.length) { showToast('No patterns to process'); return; }
+
+  batchAborted = false;
+  setRunning(true);
+
+  const total = indices.length;
+  log('UI', '─'.repeat(48));
+  log('UI', `Batch: ${total} pattern${total !== 1 ? 's' : ''} × ${state.baseImages.length} base — "${catalogueName}"`);
+  log('UI', '─'.repeat(48));
 
   if (consoleCollapsed) {
     consoleCollapsed = false;
@@ -844,48 +1015,51 @@ async function runGeneration() {
     document.getElementById('consoleChevron').style.transform = 'rotate(0deg)';
   }
 
-  window.electronAPI.onProgressUpdate(({ completed, total: t, status, message }) => {
-    const pct = Math.round((completed / t) * 100);
-    setProgress(pct, message, status, `${completed} / ${t}`);
-  });
-
   const startTime = Date.now();
+  let doneCount = 0, errCount = 0;
 
-  try {
-    const result = await window.electronAPI.generateMockups({
-      apiKey,
-      baseImages:    state.baseImages,
-      patternImages: state.patternImages,
-      destination:   state.destination,
-      catalogueName,
-      scaleMode
-    });
+  for (let i = 0; i < indices.length; i++) {
+    if (batchAborted) break;
+    const idx  = indices[i];
+    const name = state.patternImages[idx]?.path.split('/').pop() || '';
+    setProgress(Math.round(i / total * 100), `Pattern ${i + 1}/${total}: ${name}`, 'running', `${i} / ${total}`);
+    await generatePattern(idx);
+    const st = state.patternImages[idx]?.status;
+    if (st === 'done')  doneCount++;
+    else if (st === 'error') errCount++;
+  }
 
-    const elapsed      = ((Date.now() - startTime) / 1000).toFixed(1);
-    const { completed, total: t, errors } = result;
-    const successCount = completed - errors.length;
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
-    if (errors.length === 0) {
-      logSuccess('UI', `Done in ${elapsed}s — ${successCount}/${t} mockups generated`);
-      setProgress(100, `All ${t} mockups generated successfully`, 'success', `${t} / ${t}`);
-      showToast(`Done! ${successCount} mockup${successCount !== 1 ? 's' : ''} saved`);
+  if (!batchAborted) {
+    if (errCount === 0) {
+      logSuccess('UI', `Done in ${elapsed}s — ${doneCount}/${total} pattern${total !== 1 ? 's' : ''} generated`);
+      setProgress(100, `All ${doneCount} pattern${doneCount !== 1 ? 's' : ''} generated`, 'success', `${doneCount} / ${total}`);
+      showToast(`Done! ${doneCount} mockup set${doneCount !== 1 ? 's' : ''} saved`);
     } else {
-      logWarn('UI', `Done in ${elapsed}s — ${successCount}/${t} ok, ${errors.length} failed`);
-      errors.forEach(e => logError('UI', `  ✗ ${e.base} + ${e.pattern}: ${e.error}`));
-      setProgress(100, `Completed with ${errors.length} error${errors.length !== 1 ? 's' : ''}`, 'error', `${t} / ${t}`);
-      showToast(`Done: ${successCount} generated, ${errors.length} failed`, 6000);
+      logWarn('UI', `Done in ${elapsed}s — ${doneCount} ok, ${errCount} failed`);
+      setProgress(100, `Completed with ${errCount} error${errCount !== 1 ? 's' : ''}`, 'error', `${doneCount + errCount} / ${total}`);
+      showToast(`Done: ${doneCount} generated, ${errCount} failed`, 6000);
     }
-
-  } catch (err) {
-    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    logError('UI', `IPC failure after ${elapsed}s: ${err.message}`);
-    setProgress(0, `Failed: ${err.message}`, 'error', '');
-    showToast(`Error: ${err.message}`, 7000);
-    console.error(err);
   }
 
   setRunning(false);
-  updateRunButton();
+  updateRunButtons();
+}
+
+async function runPending() {
+  const pendingIndices = state.patternImages
+    .map((p, i) => ({ p, i }))
+    .filter(({ p }) => p.status === 'idle')
+    .map(({ i }) => i);
+  if (!pendingIndices.length) { showToast('No pending patterns'); return; }
+  await runBatch(pendingIndices);
+}
+
+async function runAll() {
+  state.patternImages.forEach(p => { p.status = 'idle'; p.error = null; });
+  renderPatternList();
+  await runBatch(state.patternImages.map((_, i) => i));
 }
 
 // ─── Generation: KD Mockup Generator ─────────────────────────────────────────
